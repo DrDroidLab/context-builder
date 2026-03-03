@@ -157,15 +157,8 @@ CONNECTOR_CREDENTIALS = {
 
 # Directories created by `init`
 RESOURCE_DIRS = [
-    "tools",
-    "dashboards",
-    "services",
-    "infra_components",
-    "teams",
-    "panels",
-    "alert_definitions",
-    "log_query_samples",
-    "runbooks",
+    "connectors",
+    "cross_references",
 ]
 
 # CLI tool -> how to install hint

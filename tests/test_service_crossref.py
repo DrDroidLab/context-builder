@@ -4,7 +4,7 @@ from droidctx.markdown_generator import MarkdownGenerator
 
 
 class TestServiceCrossref:
-    def test_generates_index(self, tmp_path):
+    def test_generates_services_file(self, tmp_path):
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
 
         gen = MarkdownGenerator(tmp_path)
@@ -37,14 +37,14 @@ class TestServiceCrossref:
 
         gen.generate_service_crossref(results)
 
-        index = tmp_path / "resources" / "services" / "index.md"
-        assert index.exists()
-        content = index.read_text()
+        services_file = tmp_path / "resources" / "cross_references" / "services.md"
+        assert services_file.exists()
+        content = services_file.read_text()
         assert "payment-service" in content
         assert "auth-service" in content
         assert "api-gateway" in content
 
-    def test_multi_connector_service_gets_own_file(self, tmp_path):
+    def test_multi_connector_service_in_detail_section(self, tmp_path):
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
 
         gen = MarkdownGenerator(tmp_path)
@@ -64,13 +64,14 @@ class TestServiceCrossref:
 
         gen.generate_service_crossref(results)
 
-        svc_file = tmp_path / "resources" / "services" / "payment-service.md"
-        assert svc_file.exists()
-        content = svc_file.read_text()
+        services_file = tmp_path / "resources" / "cross_references" / "services.md"
+        assert services_file.exists()
+        content = services_file.read_text()
         assert "grafana_prod" in content
         assert "k8s_prod" in content
+        assert "Multi-Source Services" in content
 
-    def test_single_connector_service_no_own_file(self, tmp_path):
+    def test_single_connector_service_no_detail_section(self, tmp_path):
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
 
         gen = MarkdownGenerator(tmp_path)
@@ -85,9 +86,12 @@ class TestServiceCrossref:
 
         gen.generate_service_crossref(results)
 
-        # Should be in index but not get its own file (only 1 connector)
-        svc_file = tmp_path / "resources" / "services" / "lonely-service.md"
-        assert not svc_file.exists()
+        services_file = tmp_path / "resources" / "cross_references" / "services.md"
+        assert services_file.exists()
+        content = services_file.read_text()
+        assert "lonely-service" in content
+        # Should NOT have the multi-source detail section
+        assert "Multi-Source Services" not in content
 
     def test_skips_failed_connectors(self, tmp_path):
         gen = MarkdownGenerator(tmp_path)
@@ -102,6 +106,6 @@ class TestServiceCrossref:
 
         gen.generate_service_crossref(results)
 
-        # No index generated since no services found
-        index = tmp_path / "resources" / "services" / "index.md"
-        assert not index.exists()
+        # No file generated since no services found
+        services_file = tmp_path / "resources" / "cross_references" / "services.md"
+        assert not services_file.exists()

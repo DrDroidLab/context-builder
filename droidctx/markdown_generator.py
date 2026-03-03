@@ -64,12 +64,12 @@ class MarkdownGenerator:
     def __init__(self, output_dir: Path):
         self.output_dir = output_dir
         self.resources_dir = output_dir / "resources"
-        self._ensure_dirs()
 
-    def _ensure_dirs(self):
-        for d in ["tools", "dashboards", "services", "infra_components",
-                   "alert_definitions", "log_query_samples", "panels"]:
-            (self.resources_dir / d).mkdir(parents=True, exist_ok=True)
+    def _connector_dir(self, connector_name: str) -> Path:
+        """Return resources/connectors/<sanitized_name>/, creating it if needed."""
+        d = self.resources_dir / "connectors" / sanitize_filename(connector_name)
+        d.mkdir(parents=True, exist_ok=True)
+        return d
 
     def _write(self, path: Path, content: str):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -80,7 +80,7 @@ class MarkdownGenerator:
 
     def generate_all(self, connector_name: str, connector_type: str, assets: dict):
         """Generate all .md files for a single connector's assets."""
-        self._generate_tool_file(connector_name, connector_type, assets)
+        self._generate_summary(connector_name, connector_type, assets)
 
         # Route to type-specific generators
         generators = {
@@ -114,8 +114,8 @@ class MarkdownGenerator:
         gen = generators.get(connector_type, self._generate_generic)
         gen(connector_name, connector_type, assets)
 
-    def _generate_tool_file(self, connector_name: str, connector_type: str, assets: dict):
-        """Generate tools/<connector_name>.md with summary."""
+    def _generate_summary(self, connector_name: str, connector_type: str, assets: dict):
+        """Generate connectors/<name>/_summary.md with resource counts."""
         lines = [
             f"# {connector_name} ({connector_type})",
             "",
@@ -133,12 +133,14 @@ class MarkdownGenerator:
         total = sum(len(v) for v in assets.values() if isinstance(v, dict))
         lines.extend(["", f"**Total resources:** {total}", ""])
 
-        self._write(self.resources_dir / "tools" / f"{sanitize_filename(connector_name)}.md", "\n".join(lines))
+        self._write(self._connector_dir(connector_name) / "_summary.md", "\n".join(lines))
 
     # ---- Grafana ----
 
     def _generate_grafana(self, name: str, ctype: str, assets: dict):
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
+
+        cdir = self._connector_dir(name)
 
         # Datasources
         ds = assets.get(SMT.GRAFANA_DATASOURCE, {})
@@ -148,12 +150,12 @@ class MarkdownGenerator:
                 n = info.get("name", uid)
                 t = info.get("type", "unknown")
                 lines.append(_table_row([n, t, uid]))
-            self._write(self.resources_dir / "tools" / f"{sanitize_filename(name)}-datasources.md", "\n".join(lines))
+            self._write(cdir / "datasources.md", "\n".join(lines))
 
         # Dashboards
         dashboards = assets.get(SMT.GRAFANA_DASHBOARD, {})
         if dashboards:
-            dash_dir = self.resources_dir / "dashboards" / sanitize_filename(name)
+            dash_dir = cdir / "dashboards"
             dash_dir.mkdir(parents=True, exist_ok=True)
 
             index_lines = [f"# Grafana Dashboards ({name})", "", f"**Total:** {len(dashboards)}", "",
@@ -187,7 +189,7 @@ class MarkdownGenerator:
 
                 self._write(dash_dir / f"{sanitize_filename(title)}.md", "\n".join(dlines))
 
-            self._write(self.resources_dir / "dashboards" / f"{sanitize_filename(name)}-index.md", "\n".join(index_lines))
+            self._write(cdir / "dashboards.md", "\n".join(index_lines))
 
         # Alerts
         alerts = assets.get(SMT.GRAFANA_ALERT_RULE, {})
@@ -200,12 +202,14 @@ class MarkdownGenerator:
                 labels = info.get("labels", {})
                 label_str = ", ".join(f"{k}={v}" for k, v in labels.items()) if isinstance(labels, dict) else ""
                 lines.append(_table_row([aname, state, label_str]))
-            self._write(self.resources_dir / "alert_definitions" / f"{sanitize_filename(name)}.md", "\n".join(lines))
+            self._write(cdir / "alerts.md", "\n".join(lines))
 
     # ---- Datadog ----
 
     def _generate_datadog(self, name: str, ctype: str, assets: dict):
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
+
+        cdir = self._connector_dir(name)
 
         # Monitors
         monitors = assets.get(SMT.DATADOG_MONITOR, {})
@@ -217,7 +221,7 @@ class MarkdownGenerator:
                 mtype = info.get("type", "")
                 tags = ", ".join(info.get("tags", [])) if isinstance(info.get("tags"), list) else ""
                 lines.append(_table_row([mname, mtype, tags]))
-            self._write(self.resources_dir / "alert_definitions" / f"{sanitize_filename(name)}.md", "\n".join(lines))
+            self._write(cdir / "monitors.md", "\n".join(lines))
 
         # Services (filter out ephemeral pod/job names)
         services = assets.get(SMT.DATADOG_SERVICE, {})
@@ -233,7 +237,7 @@ class MarkdownGenerator:
                     if isinstance(info, dict):
                         details = str({k: v for k, v in info.items() if k != "name"})[:200]
                     lines.append(_table_row([sname, details]))
-                self._write(self.resources_dir / "services" / f"{sanitize_filename(name)}-services.md", "\n".join(lines))
+                self._write(cdir / "services.md", "\n".join(lines))
 
         # Dashboards
         dashboards = assets.get(SMT.DATADOG_DASHBOARD, {})
@@ -243,12 +247,14 @@ class MarkdownGenerator:
             for uid, info in dashboards.items():
                 dname = info.get("title", info.get("name", uid)) if isinstance(info, dict) else uid
                 lines.append(_table_row([dname, uid]))
-            self._write(self.resources_dir / "dashboards" / f"{sanitize_filename(name)}-index.md", "\n".join(lines))
+            self._write(cdir / "dashboards.md", "\n".join(lines))
 
     # ---- CloudWatch ----
 
     def _generate_cloudwatch(self, name: str, ctype: str, assets: dict):
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
+
+        cdir = self._connector_dir(name)
 
         # Log Groups
         log_groups = assets.get(SMT.CLOUDWATCH_LOG_GROUP, {})
@@ -258,7 +264,7 @@ class MarkdownGenerator:
             for uid, info in log_groups.items():
                 lgname = info.get("name", uid) if isinstance(info, dict) else uid
                 lines.append(_table_row([lgname, ""]))
-            self._write(self.resources_dir / "log_query_samples" / f"{sanitize_filename(name)}.md", "\n".join(lines))
+            self._write(cdir / "log_groups.md", "\n".join(lines))
 
         # Alarms
         alarms = assets.get(SMT.CLOUDWATCH_ALARMS, {})
@@ -270,7 +276,7 @@ class MarkdownGenerator:
                 metric = info.get("metric_name", "") if isinstance(info, dict) else ""
                 threshold = info.get("threshold", "") if isinstance(info, dict) else ""
                 lines.append(_table_row([aname, str(metric), str(threshold)]))
-            self._write(self.resources_dir / "alert_definitions" / f"{sanitize_filename(name)}.md", "\n".join(lines))
+            self._write(cdir / "alarms.md", "\n".join(lines))
 
         # Dashboards
         dashboards = assets.get(SMT.CLOUDWATCH_DASHBOARD, {})
@@ -280,7 +286,7 @@ class MarkdownGenerator:
             for uid, info in dashboards.items():
                 dname = info.get("name", uid) if isinstance(info, dict) else uid
                 lines.append(_table_row([dname]))
-            self._write(self.resources_dir / "dashboards" / f"{sanitize_filename(name)}-index.md", "\n".join(lines))
+            self._write(cdir / "dashboards.md", "\n".join(lines))
 
     # ---- Kubernetes / EKS / GKE ----
 
@@ -317,17 +323,15 @@ class MarkdownGenerator:
         }
 
         types = type_map.get(prefix, {})
-        infra_dir = self.resources_dir / "infra_components"
+        cdir = self._connector_dir(name)
 
-        lines = [f"# {prefix} Cluster ({name})", ""]
-
+        # Write per-resource-type files
         for resource_name, model_type in types.items():
             items = assets.get(model_type, {})
             if not items:
                 continue
 
-            lines.append(f"## {resource_name.replace('_', ' ').title()}s ({len(items)})")
-            lines.append("")
+            lines = [f"# {resource_name.replace('_', ' ').title()}s ({name})", "", f"**Total:** {len(items)}", ""]
 
             if resource_name == "deployment":
                 lines.extend([_table_row(["Name", "Replicas", "Image"]), _table_row(["---", "---", "---"])])
@@ -354,14 +358,14 @@ class MarkdownGenerator:
                     lines.append(_table_row([iname, ""]))
 
             lines.append("")
-
-        self._write(infra_dir / f"{sanitize_filename(name)}.md", "\n".join(lines))
+            self._write(cdir / f"{resource_name}s.md", "\n".join(lines))
 
     # ---- New Relic ----
 
     def _generate_newrelic(self, name: str, ctype: str, assets: dict):
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
 
+        cdir = self._connector_dir(name)
         lines = [f"# New Relic ({name})", ""]
 
         policies = assets.get(SMT.NEW_RELIC_POLICY, {})
@@ -383,13 +387,14 @@ class MarkdownGenerator:
                 lines.append(_table_row([ename, str(etype)]))
             lines.append("")
 
-        self._write(self.resources_dir / "tools" / f"{sanitize_filename(name)}-details.md", "\n".join(lines))
+        self._write(cdir / "details.md", "\n".join(lines))
 
     # ---- GitHub ----
 
     def _generate_github(self, name: str, ctype: str, assets: dict):
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
 
+        cdir = self._connector_dir(name)
         lines = [f"# GitHub ({name})", ""]
 
         repos = assets.get(SMT.GITHUB_REPOSITORY, {})
@@ -410,18 +415,14 @@ class MarkdownGenerator:
                 lines.append(f"- {mname}")
             lines.append("")
 
-        self._write(self.resources_dir / "tools" / f"{sanitize_filename(name)}-details.md", "\n".join(lines))
+        self._write(cdir / "details.md", "\n".join(lines))
 
     # ---- Databases ----
 
     def _generate_database(self, name: str, ctype: str, assets: dict):
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
 
-        table_types = {
-            SMT.POSTGRES_TABLE, SMT.CLICKHOUSE_TABLE, SMT.CLICKHOUSE_DATABASE,
-            SMT.SQL_DATABASE_TABLE, SMT.MONGODB_DATABASE, SMT.MONGODB_COLLECTION,
-        }
-
+        cdir = self._connector_dir(name)
         lines = [f"# Database ({name}) - {ctype}", ""]
 
         for model_type, items in assets.items():
@@ -440,13 +441,14 @@ class MarkdownGenerator:
                 lines.append(_table_row([iname, details[:200]]))
             lines.append("")
 
-        self._write(self.resources_dir / "infra_components" / f"{sanitize_filename(name)}.md", "\n".join(lines))
+        self._write(cdir / "tables.md", "\n".join(lines))
 
     # ---- Search Indexes ----
 
     def _generate_search_index(self, name: str, ctype: str, assets: dict):
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
 
+        cdir = self._connector_dir(name)
         lines = [f"# {ctype} ({name})", ""]
 
         for model_type, items in assets.items():
@@ -460,11 +462,12 @@ class MarkdownGenerator:
                 lines.append(_table_row([iname, ""]))
             lines.append("")
 
-        self._write(self.resources_dir / "infra_components" / f"{sanitize_filename(name)}.md", "\n".join(lines))
+        self._write(cdir / "indices.md", "\n".join(lines))
 
     # ---- Azure ----
 
     def _generate_azure(self, name: str, ctype: str, assets: dict):
+        cdir = self._connector_dir(name)
         lines = [f"# Azure ({name})", ""]
 
         for model_type, items in assets.items():
@@ -479,12 +482,14 @@ class MarkdownGenerator:
                 lines.append(_table_row([rname, str(rtype)[:200]]))
             lines.append("")
 
-        self._write(self.resources_dir / "infra_components" / f"{sanitize_filename(name)}.md", "\n".join(lines))
+        self._write(cdir / "resources.md", "\n".join(lines))
 
     # ---- SigNoz ----
 
     def _generate_signoz(self, name: str, ctype: str, assets: dict):
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
+
+        cdir = self._connector_dir(name)
 
         services = assets.get(SMT.SIGNOZ_SERVICE, {})
         if services:
@@ -493,7 +498,7 @@ class MarkdownGenerator:
             for uid, info in services.items():
                 sname = info.get("name", uid) if isinstance(info, dict) else uid
                 lines.append(_table_row([sname]))
-            self._write(self.resources_dir / "services" / f"{sanitize_filename(name)}-services.md", "\n".join(lines))
+            self._write(cdir / "services.md", "\n".join(lines))
 
         dashboards = assets.get(SMT.SIGNOZ_DASHBOARD, {})
         if dashboards:
@@ -502,12 +507,13 @@ class MarkdownGenerator:
             for uid, info in dashboards.items():
                 dname = info.get("title", info.get("name", uid)) if isinstance(info, dict) else uid
                 lines.append(_table_row([dname, uid]))
-            self._write(self.resources_dir / "dashboards" / f"{sanitize_filename(name)}-index.md", "\n".join(lines))
+            self._write(cdir / "dashboards.md", "\n".join(lines))
 
     # ---- Generic fallback ----
 
     def _generate_generic(self, name: str, ctype: str, assets: dict):
         """Generic generator for connector types without specific handling."""
+        cdir = self._connector_dir(name)
         lines = [f"# {ctype} ({name})", ""]
 
         for model_type, items in assets.items():
@@ -526,12 +532,12 @@ class MarkdownGenerator:
                 lines.append(_table_row([iname, details]))
             lines.append("")
 
-        self._write(self.resources_dir / "tools" / f"{sanitize_filename(name)}-details.md", "\n".join(lines))
+        self._write(cdir / "details.md", "\n".join(lines))
 
     # ---- Cross-service aggregation ----
 
     def generate_service_crossref(self, all_results: dict[str, dict]):
-        """Generate services/*.md by cross-referencing service names across connectors.
+        """Generate cross_references/services.md by cross-referencing service names across connectors.
 
         Scans all connector assets for service-like entities and groups them by name.
         """
@@ -587,8 +593,8 @@ class MarkdownGenerator:
         if not service_map:
             return
 
-        # Generate index
-        index_lines = [
+        # Generate cross-reference file
+        lines = [
             "# Discovered Services",
             "",
             f"**Total unique services:** {len(service_map)}",
@@ -602,38 +608,31 @@ class MarkdownGenerator:
             display = entries[0]["display_name"]
             connectors = ", ".join(sorted(set(e["connector"] for e in entries)))
             types = ", ".join(sorted(set(e["model_type"] for e in entries)))
-            index_lines.append(_table_row([display, connectors, types]))
+            lines.append(_table_row([display, connectors, types]))
 
-        self._write(self.resources_dir / "services" / "index.md", "\n".join(index_lines))
+        # Add detail sections for services that appear in 2+ connectors
+        multi_connector = {k: v for k, v in service_map.items()
+                          if len(set(e["connector"] for e in v)) >= 2}
+        if multi_connector:
+            lines.extend(["", "---", "", "## Multi-Source Services", ""])
+            for svc_name in sorted(multi_connector.keys()):
+                entries = multi_connector[svc_name]
+                display = entries[0]["display_name"]
+                lines.extend([
+                    f"### {display}",
+                    "",
+                    _table_row(["Tool", "Type", "Resource"]),
+                    _table_row(["---", "---", "---"]),
+                ])
+                for entry in entries:
+                    lines.append(_table_row([
+                        entry["connector"],
+                        entry["connector_type"],
+                        entry["model_type"],
+                    ]))
+                lines.append("")
 
-        # Generate per-service files for services that appear in 2+ connectors
-        for svc_name, entries in service_map.items():
-            unique_connectors = set(e["connector"] for e in entries)
-            if len(unique_connectors) < 2:
-                continue
-
-            display = entries[0]["display_name"]
-            lines = [
-                f"# {display}",
-                "",
-                "## Where to Find Data",
-                "",
-                _table_row(["Tool", "Type", "Resource"]),
-                _table_row(["---", "---", "---"]),
-            ]
-
-            for entry in entries:
-                lines.append(_table_row([
-                    entry["connector"],
-                    entry["connector_type"],
-                    entry["model_type"],
-                ]))
-
-            lines.append("")
-            self._write(
-                self.resources_dir / "services" / f"{sanitize_filename(display)}.md",
-                "\n".join(lines),
-            )
+        self._write(self.resources_dir / "cross_references" / "services.md", "\n".join(lines))
 
     # ---- Overview ----
 
@@ -679,14 +678,15 @@ class MarkdownGenerator:
             "",
             "```",
             "resources/",
-            "  tools/           - Per-connector summaries",
-            "  dashboards/      - Dashboard details with panels and queries",
-            "  services/        - Discovered services across all sources",
-            "  infra_components/- K8s resources, cloud infra, databases",
-            "  alert_definitions/- Alert rules and monitors",
-            "  log_query_samples/- Log groups and example queries",
-            "  panels/          - Individual panel details",
-            "  runbooks/        - User-written runbooks",
+            "  connectors/",
+            "    <name>/          - All assets for one connector",
+            "      _summary.md    - Resource counts",
+            "      dashboards.md  - Dashboard index",
+            "      alerts.md      - Alert rules / monitors",
+            "      services.md    - Discovered services",
+            "      ...            - Other resource-type files",
+            "  cross_references/",
+            "    services.md      - Services seen across multiple connectors",
             "```",
             "",
             "## How to Use This Context",

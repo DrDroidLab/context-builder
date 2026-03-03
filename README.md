@@ -161,27 +161,33 @@ After running `droidctx sync`, your context directory will contain:
 ```
 my-infra/
   resources/
-    overview.md              # Summary of all connected tools
-    tools/                   # Per-connector summaries
-      grafana_prod.md
-      k8s_production.md
-    dashboards/              # Dashboard details with panels and queries
-      grafana_prod-index.md
+    overview.md                    # Summary of all connected tools
+    connectors/
       grafana_prod/
-        api-gateway.md
-        payment-service.md
-    services/                # Cross-tool service aggregation
-      index.md
-      payment-service.md     # Shows where this service appears across tools
-    infra_components/        # K8s resources, cloud infra, databases
-      k8s_production.md
-      postgres_main.md
-    alert_definitions/       # Alert rules and monitors
-      datadog_prod.md
-      grafana_prod.md
-    log_query_samples/       # Log groups and example queries
-      cloudwatch_us.md
-    runbooks/                # Placeholder for your runbooks
+        _summary.md                # Resource counts for this connector
+        datasources.md             # Grafana datasources
+        dashboards.md              # Dashboard index
+        dashboards/
+          api-gateway.md           # Individual dashboard with panels & queries
+          payment-service.md
+        alerts.md                  # Alert rules
+      k8s_production/
+        _summary.md
+        namespaces.md
+        deployments.md
+        services.md
+        ingresses.md
+        ...
+      datadog_prod/
+        _summary.md
+        monitors.md
+        services.md
+        dashboards.md
+      postgres_main/
+        _summary.md
+        tables.md
+    cross_references/
+      services.md                  # Services seen across multiple connectors
 ```
 
 ## Using with Claude Code

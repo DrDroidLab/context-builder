@@ -28,7 +28,7 @@ class TestSyncEngine:
 
         assert result == {}
         # No resources dir should be created
-        assert not (output / "resources" / "tools").exists()
+        assert not (output / "resources" / "connectors").exists()
 
     def test_invalid_creds_still_runs_valid_ones(self, tmp_path):
         keyfile = tmp_path / "creds.yaml"

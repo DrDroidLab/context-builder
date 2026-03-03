@@ -16,15 +16,8 @@ class TestInitCommand:
         assert result.exit_code == 0
 
         assert (target / "resources").is_dir()
-        assert (target / "resources" / "tools").is_dir()
-        assert (target / "resources" / "dashboards").is_dir()
-        assert (target / "resources" / "services").is_dir()
-        assert (target / "resources" / "infra_components").is_dir()
-        assert (target / "resources" / "teams").is_dir()
-        assert (target / "resources" / "panels").is_dir()
-        assert (target / "resources" / "alert_definitions").is_dir()
-        assert (target / "resources" / "log_query_samples").is_dir()
-        assert (target / "resources" / "runbooks").is_dir()
+        assert (target / "resources" / "connectors").is_dir()
+        assert (target / "resources" / "cross_references").is_dir()
 
     def test_creates_credentials_template(self, tmp_path):
         target = tmp_path / "ctx"
