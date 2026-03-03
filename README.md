@@ -7,11 +7,14 @@ Connect your production tools (Grafana, Datadog, Kubernetes, CloudWatch, databas
 ## Quick Start
 
 ```bash
-# Install
+# Install (creates an isolated venv at ~/.droidctx automatically)
 curl -fsSL https://raw.githubusercontent.com/DrDroidLab/context-builder/main/install.sh | bash
 
-# Or via pip
-pip install git+https://github.com/DrDroidLab/context-builder.git
+# Or via pipx
+pipx install git+https://github.com/DrDroidLab/context-builder.git
+
+# Or manually with a venv
+python3 -m venv ~/.droidctx && ~/.droidctx/bin/pip install git+https://github.com/DrDroidLab/context-builder.git && mkdir -p ~/.local/bin && ln -sf ~/.droidctx/bin/droidctx ~/.local/bin/droidctx
 ```
 
 ```bash
