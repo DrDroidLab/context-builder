@@ -243,9 +243,14 @@ def merge_into_credentials(
 
     for connector in detected:
         name = connector.pop("_connector_name")
-        connector.pop("_needs_manual", None)
+        needs_manual = connector.pop("_needs_manual", None)
 
         if name in merged:
+            skipped.append(name)
+            continue
+
+        # Don't write connectors that have empty required fields
+        if needs_manual:
             skipped.append(name)
             continue
 

@@ -232,23 +232,21 @@ def detect(
     merged, added, skipped = merge_into_credentials(detected, existing)
 
     if not added:
-        console.print("[dim]No new connectors to add (all already exist in credentials file).[/]\n")
-        return
+        if needs_manual:
+            console.print("[dim]No complete connectors to add.[/]")
+        else:
+            console.print("[dim]No new connectors to add (all already exist in credentials file).[/]")
+    else:
+        save_credentials(merged, keyfile)
 
-    save_credentials(merged, keyfile)
-
-    console.print(f"[bold green]Added {len(added)} connector(s) to {keyfile}[/]")
-    for name in added:
-        console.print(f"  + {name}")
-
-    if skipped:
-        console.print(f"\n[dim]Skipped {len(skipped)} (already exist): {', '.join(skipped)}[/]")
+        console.print(f"[bold green]Added {len(added)} connector(s) to {keyfile}[/]")
+        for name in added:
+            console.print(f"  + {name}")
 
     if needs_manual:
-        console.print("\n[yellow]Some connectors need manual completion:[/]")
+        console.print(f"\n[yellow]Not added (needs manual config in {keyfile}):[/]")
         for name, fields in needs_manual:
-            if name in added:
-                console.print(f"  {name}: fill in {', '.join(fields)}")
+            console.print(f"  {name}: add {', '.join(fields)}")
 
     console.print(f"\nNext: [bold]droidctx sync -k {keyfile}[/]")
     console.print()

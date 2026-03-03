@@ -178,11 +178,21 @@ class TestMergeIntoCredentials:
 
     def test_strips_internal_fields(self):
         detected = [
-            {"_connector_name": "k8s", "_needs_manual": ["field"], "type": "KUBERNETES", "_cli_mode": True, "cluster_name": "c"},
+            {"_connector_name": "k8s", "type": "KUBERNETES", "_cli_mode": True, "cluster_name": "c"},
         ]
         merged, added, _ = merge_into_credentials(detected, {})
         assert "_connector_name" not in merged["k8s"]
-        assert "_needs_manual" not in merged["k8s"]
+
+    def test_skips_needs_manual(self):
+        detected = [
+            {"_connector_name": "azure_sub", "_needs_manual": ["client_id"], "type": "AZURE", "azure_tenant_id": "t"},
+            {"_connector_name": "k8s", "type": "KUBERNETES", "_cli_mode": True, "cluster_name": "c"},
+        ]
+        merged, added, skipped = merge_into_credentials(detected, {})
+        assert "azure_sub" not in merged
+        assert "azure_sub" in skipped
+        assert "k8s" in merged
+        assert added == ["k8s"]
 
 
 class TestSaveCredentials:
