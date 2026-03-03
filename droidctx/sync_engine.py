@@ -32,6 +32,16 @@ def sync(
     """
     console = console or Console()
 
+    # Suppress noisy toolkit logs unless verbose
+    if not verbose:
+        for noisy in [
+            "drdroid_debug_toolkit",
+            "core",
+            "urllib3",
+            "datadog_api_client",
+        ]:
+            logging.getLogger(noisy).setLevel(logging.CRITICAL)
+
     # 1. Load and validate credentials
     console.print("[bold]Loading credentials...[/]")
     credentials = load_credentials(keyfile)
@@ -98,6 +108,7 @@ def sync(
                         connector_type=ct,
                         yaml_config=cfg,
                         progress_callback=None,
+                        verbose=verbose,
                     )
 
                 futures[executor.submit(_run)] = name

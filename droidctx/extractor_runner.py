@@ -1,7 +1,11 @@
 """Wraps drdroid-debug-toolkit metadata extractors for standalone use."""
 
+import io
 import logging
+import os
+import sys
 import uuid
+from contextlib import contextmanager
 from typing import Any
 
 from drdroid_debug_toolkit.core.integrations.source_metadata_extractor import SourceMetadataExtractor
@@ -40,6 +44,19 @@ def _patch_datadog_unstable_ops():
         pass
 
 
+@contextmanager
+def _suppress_output():
+    """Suppress stdout and stderr from noisy toolkit code."""
+    devnull = open(os.devnull, "w")
+    old_stdout, old_stderr = sys.stdout, sys.stderr
+    try:
+        sys.stdout, sys.stderr = devnull, devnull
+        yield
+    finally:
+        sys.stdout, sys.stderr = old_stdout, old_stderr
+        devnull.close()
+
+
 def get_extract_methods(extractor) -> list[str]:
     """Get all extract_* methods on an extractor instance (excluding base class methods)."""
     return [
@@ -55,6 +72,7 @@ def run_extractor(
     connector_type: str,
     yaml_config: dict,
     progress_callback: Any = None,
+    verbose: bool = False,
 ) -> dict:
     """Run all extract_* methods for a single connector.
 
@@ -85,12 +103,21 @@ def run_extractor(
     _patch_datadog_unstable_ops()
 
     # Instantiate extractor (no api_host/api_token = standalone mode)
+    # Suppress stdout during init — toolkit prints debug noise
     request_id = str(uuid.uuid4())
-    extractor = extractor_class(
-        request_id=request_id,
-        connector_name=connector_name,
-        **creds_kwargs,
-    )
+    if verbose:
+        extractor = extractor_class(
+            request_id=request_id,
+            connector_name=connector_name,
+            **creds_kwargs,
+        )
+    else:
+        with _suppress_output():
+            extractor = extractor_class(
+                request_id=request_id,
+                connector_name=connector_name,
+                **creds_kwargs,
+            )
 
     # Set attributes that some extractors expect but don't define in __init__
     if not hasattr(extractor, "account_id"):
@@ -105,7 +132,11 @@ def run_extractor(
             progress_callback(method_name, "running")
 
         try:
-            result = getattr(extractor, method_name)()
+            if verbose:
+                result = getattr(extractor, method_name)()
+            else:
+                with _suppress_output():
+                    result = getattr(extractor, method_name)()
             count = len(result) if isinstance(result, dict) else 0
             results_summary[method_name] = count
             if progress_callback:
