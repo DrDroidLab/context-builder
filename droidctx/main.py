@@ -70,8 +70,9 @@ def init(
 
     console.print(f"\n[bold green]Initialized droidctx context at:[/] {path}\n")
     console.print("Next steps:")
-    console.print(f"  1. Edit credentials:  [bold]{creds_file}[/]")
-    console.print(f"  2. Sync metadata:     [bold]droidctx sync[/]")
+    console.print(f"  1. Auto-detect CLIs:  [bold]droidctx detect --keyfile {creds_file}[/]")
+    console.print(f"  2. Edit credentials:  [bold]{creds_file}[/]")
+    console.print(f"  3. Sync metadata:     [bold]droidctx sync --keyfile {creds_file}[/]")
     console.print()
 
 
