@@ -1,0 +1,680 @@
+"""Transforms extracted assets into structured .md files."""
+
+import logging
+import re
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# Max lines per generated .md file before truncation
+MAX_LINES = 500
+
+
+def sanitize_filename(name: str) -> str:
+    """Convert a name to a safe filename."""
+    name = re.sub(r'[^\w\s\-.]', '', name)
+    name = re.sub(r'\s+', '-', name.strip())
+    return name.lower()[:100]
+
+
+def _truncate(lines: list[str], max_lines: int = MAX_LINES) -> list[str]:
+    """Truncate lines list and add a note if exceeded."""
+    if len(lines) <= max_lines:
+        return lines
+    return lines[:max_lines] + [f"\n> ... truncated ({len(lines) - max_lines} more lines)\n"]
+
+
+def _table_row(cells: list[str]) -> str:
+    """Create a markdown table row."""
+    return "| " + " | ".join(str(c).replace("|", "\\|").replace("\n", " ") for c in cells) + " |"
+
+
+def _model_type_name(model_type) -> str:
+    """Get a readable name for a SourceModelType enum value."""
+    try:
+        from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType
+        return SourceModelType.Name(model_type)
+    except Exception:
+        return str(model_type)
+
+
+class MarkdownGenerator:
+    """Generates .md files from extracted infrastructure assets."""
+
+    def __init__(self, output_dir: Path):
+        self.output_dir = output_dir
+        self.resources_dir = output_dir / "resources"
+        self._ensure_dirs()
+
+    def _ensure_dirs(self):
+        for d in ["tools", "dashboards", "services", "infra_components",
+                   "alert_definitions", "log_query_samples", "panels"]:
+            (self.resources_dir / d).mkdir(parents=True, exist_ok=True)
+
+    def _write(self, path: Path, content: str):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lines = content.split("\n")
+        lines = _truncate(lines)
+        path.write_text("\n".join(lines))
+        logger.debug(f"Wrote {path}")
+
+    def generate_all(self, connector_name: str, connector_type: str, assets: dict):
+        """Generate all .md files for a single connector's assets."""
+        self._generate_tool_file(connector_name, connector_type, assets)
+
+        # Route to type-specific generators
+        generators = {
+            "GRAFANA": self._generate_grafana,
+            "GRAFANA_LOKI": self._generate_grafana,
+            "DATADOG": self._generate_datadog,
+            "CLOUDWATCH": self._generate_cloudwatch,
+            "KUBERNETES": self._generate_kubernetes,
+            "EKS": self._generate_kubernetes_like,
+            "GKE": self._generate_kubernetes_like,
+            "NEW_RELIC": self._generate_newrelic,
+            "GITHUB": self._generate_github,
+            "POSTGRES": self._generate_database,
+            "MONGODB": self._generate_database,
+            "CLICKHOUSE": self._generate_database,
+            "SQL_DATABASE_CONNECTION": self._generate_database,
+            "ELASTIC_SEARCH": self._generate_search_index,
+            "OPEN_SEARCH": self._generate_search_index,
+            "JIRA_CLOUD": self._generate_generic,
+            "ARGOCD": self._generate_generic,
+            "JENKINS": self._generate_generic,
+            "SIGNOZ": self._generate_signoz,
+            "SENTRY": self._generate_generic,
+            "AZURE": self._generate_azure,
+            "POSTHOG": self._generate_generic,
+            "VICTORIA_LOGS": self._generate_generic,
+            "CORALOGIX": self._generate_generic,
+            "GCM": self._generate_generic,
+        }
+
+        gen = generators.get(connector_type, self._generate_generic)
+        gen(connector_name, connector_type, assets)
+
+    def _generate_tool_file(self, connector_name: str, connector_type: str, assets: dict):
+        """Generate tools/<connector_name>.md with summary."""
+        lines = [
+            f"# {connector_name} ({connector_type})",
+            "",
+            "## Extracted Resources",
+            "",
+            _table_row(["Resource Type", "Count"]),
+            _table_row(["---", "---"]),
+        ]
+
+        for model_type, items in sorted(assets.items(), key=lambda x: _model_type_name(x[0])):
+            name = _model_type_name(model_type)
+            count = len(items) if isinstance(items, dict) else 0
+            lines.append(_table_row([name, str(count)]))
+
+        total = sum(len(v) for v in assets.values() if isinstance(v, dict))
+        lines.extend(["", f"**Total resources:** {total}", ""])
+
+        self._write(self.resources_dir / "tools" / f"{sanitize_filename(connector_name)}.md", "\n".join(lines))
+
+    # ---- Grafana ----
+
+    def _generate_grafana(self, name: str, ctype: str, assets: dict):
+        from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
+
+        # Datasources
+        ds = assets.get(SMT.GRAFANA_DATASOURCE, {})
+        if ds:
+            lines = [f"# Grafana Datasources ({name})", "", _table_row(["Name", "Type", "UID"]), _table_row(["---", "---", "---"])]
+            for uid, info in ds.items():
+                n = info.get("name", uid)
+                t = info.get("type", "unknown")
+                lines.append(_table_row([n, t, uid]))
+            self._write(self.resources_dir / "tools" / f"{sanitize_filename(name)}-datasources.md", "\n".join(lines))
+
+        # Dashboards
+        dashboards = assets.get(SMT.GRAFANA_DASHBOARD, {})
+        if dashboards:
+            dash_dir = self.resources_dir / "dashboards" / sanitize_filename(name)
+            dash_dir.mkdir(parents=True, exist_ok=True)
+
+            index_lines = [f"# Grafana Dashboards ({name})", "", f"**Total:** {len(dashboards)}", "",
+                           _table_row(["Dashboard", "UID", "Panels"]), _table_row(["---", "---", "---"])]
+
+            for uid, info in dashboards.items():
+                title = info.get("title", uid)
+                panels = info.get("panels", [])
+                panel_count = len(panels) if isinstance(panels, list) else 0
+                index_lines.append(_table_row([title, uid, str(panel_count)]))
+
+                # Individual dashboard file
+                dlines = [f"# {title}", f"**Source:** {name}", f"**UID:** {uid}", ""]
+                if isinstance(panels, list) and panels:
+                    dlines.extend([
+                        "## Panels", "",
+                        _table_row(["Panel", "Type", "Query/Metric"]),
+                        _table_row(["---", "---", "---"]),
+                    ])
+                    for p in panels:
+                        if isinstance(p, dict):
+                            pname = p.get("title", "Untitled")
+                            ptype = p.get("type", "")
+                            expr = ""
+                            targets = p.get("targets", [])
+                            if isinstance(targets, list):
+                                for t in targets[:1]:
+                                    if isinstance(t, dict):
+                                        expr = t.get("expr", t.get("query", ""))
+                            dlines.append(_table_row([pname, ptype, str(expr)[:200]]))
+
+                self._write(dash_dir / f"{sanitize_filename(title)}.md", "\n".join(dlines))
+
+            self._write(self.resources_dir / "dashboards" / f"{sanitize_filename(name)}-index.md", "\n".join(index_lines))
+
+        # Alerts
+        alerts = assets.get(SMT.GRAFANA_ALERT_RULE, {})
+        if alerts:
+            lines = [f"# Grafana Alert Rules ({name})", "", f"**Total:** {len(alerts)}", "",
+                     _table_row(["Alert", "State", "Labels"]), _table_row(["---", "---", "---"])]
+            for uid, info in alerts.items():
+                aname = info.get("title", info.get("name", uid))
+                state = info.get("state", "")
+                labels = info.get("labels", {})
+                label_str = ", ".join(f"{k}={v}" for k, v in labels.items()) if isinstance(labels, dict) else ""
+                lines.append(_table_row([aname, state, label_str]))
+            self._write(self.resources_dir / "alert_definitions" / f"{sanitize_filename(name)}.md", "\n".join(lines))
+
+    # ---- Datadog ----
+
+    def _generate_datadog(self, name: str, ctype: str, assets: dict):
+        from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
+
+        # Monitors
+        monitors = assets.get(SMT.DATADOG_MONITOR, {})
+        if monitors:
+            lines = [f"# Datadog Monitors ({name})", "", f"**Total:** {len(monitors)}", "",
+                     _table_row(["Monitor", "Type", "Tags"]), _table_row(["---", "---", "---"])]
+            for uid, info in monitors.items():
+                mname = info.get("name", uid)
+                mtype = info.get("type", "")
+                tags = ", ".join(info.get("tags", [])) if isinstance(info.get("tags"), list) else ""
+                lines.append(_table_row([mname, mtype, tags]))
+            self._write(self.resources_dir / "alert_definitions" / f"{sanitize_filename(name)}.md", "\n".join(lines))
+
+        # Services
+        services = assets.get(SMT.DATADOG_SERVICE, {})
+        if services:
+            lines = [f"# Datadog Services ({name})", "", f"**Total:** {len(services)}", "",
+                     _table_row(["Service", "Details"]), _table_row(["---", "---"])]
+            for uid, info in services.items():
+                sname = info.get("name", uid) if isinstance(info, dict) else uid
+                details = ""
+                if isinstance(info, dict):
+                    details = str({k: v for k, v in info.items() if k != "name"})[:200]
+                lines.append(_table_row([sname, details]))
+            self._write(self.resources_dir / "services" / f"{sanitize_filename(name)}-services.md", "\n".join(lines))
+
+        # Dashboards
+        dashboards = assets.get(SMT.DATADOG_DASHBOARD, {})
+        if dashboards:
+            lines = [f"# Datadog Dashboards ({name})", "", f"**Total:** {len(dashboards)}", "",
+                     _table_row(["Dashboard", "ID"]), _table_row(["---", "---"])]
+            for uid, info in dashboards.items():
+                dname = info.get("title", info.get("name", uid)) if isinstance(info, dict) else uid
+                lines.append(_table_row([dname, uid]))
+            self._write(self.resources_dir / "dashboards" / f"{sanitize_filename(name)}-index.md", "\n".join(lines))
+
+    # ---- CloudWatch ----
+
+    def _generate_cloudwatch(self, name: str, ctype: str, assets: dict):
+        from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
+
+        # Log Groups
+        log_groups = assets.get(SMT.CLOUDWATCH_LOG_GROUP, {})
+        if log_groups:
+            lines = [f"# CloudWatch Log Groups ({name})", "", f"**Total:** {len(log_groups)}", "",
+                     _table_row(["Log Group", "Details"]), _table_row(["---", "---"])]
+            for uid, info in log_groups.items():
+                lgname = info.get("name", uid) if isinstance(info, dict) else uid
+                lines.append(_table_row([lgname, ""]))
+            self._write(self.resources_dir / "log_query_samples" / f"{sanitize_filename(name)}.md", "\n".join(lines))
+
+        # Alarms
+        alarms = assets.get(SMT.CLOUDWATCH_ALARMS, {})
+        if alarms:
+            lines = [f"# CloudWatch Alarms ({name})", "", f"**Total:** {len(alarms)}", "",
+                     _table_row(["Alarm", "Metric", "Threshold"]), _table_row(["---", "---", "---"])]
+            for uid, info in alarms.items():
+                aname = info.get("name", uid) if isinstance(info, dict) else uid
+                metric = info.get("metric_name", "") if isinstance(info, dict) else ""
+                threshold = info.get("threshold", "") if isinstance(info, dict) else ""
+                lines.append(_table_row([aname, str(metric), str(threshold)]))
+            self._write(self.resources_dir / "alert_definitions" / f"{sanitize_filename(name)}.md", "\n".join(lines))
+
+        # Dashboards
+        dashboards = assets.get(SMT.CLOUDWATCH_DASHBOARD, {})
+        if dashboards:
+            lines = [f"# CloudWatch Dashboards ({name})", "", f"**Total:** {len(dashboards)}", "",
+                     _table_row(["Dashboard"]), _table_row(["---"])]
+            for uid, info in dashboards.items():
+                dname = info.get("name", uid) if isinstance(info, dict) else uid
+                lines.append(_table_row([dname]))
+            self._write(self.resources_dir / "dashboards" / f"{sanitize_filename(name)}-index.md", "\n".join(lines))
+
+    # ---- Kubernetes / EKS / GKE ----
+
+    def _generate_kubernetes(self, name: str, ctype: str, assets: dict):
+        self._generate_k8s_resources(name, ctype, assets, "KUBERNETES")
+
+    def _generate_kubernetes_like(self, name: str, ctype: str, assets: dict):
+        self._generate_k8s_resources(name, ctype, assets, ctype)
+
+    def _generate_k8s_resources(self, name: str, ctype: str, assets: dict, prefix: str):
+        from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
+
+        # Map prefix to model types
+        type_map = {
+            "KUBERNETES": {
+                "namespace": SMT.KUBERNETES_NAMESPACE, "service": SMT.KUBERNETES_SERVICE,
+                "deployment": SMT.KUBERNETES_DEPLOYMENT, "ingress": SMT.KUBERNETES_INGRESS,
+                "hpa": SMT.KUBERNETES_HPA, "replicaset": SMT.KUBERNETES_REPLICASET,
+                "statefulset": SMT.KUBERNETES_STATEFULSET,
+                "network_policy": SMT.KUBERNETES_NETWORK_POLICY,
+            },
+            "EKS": {
+                "namespace": SMT.EKS_NAMESPACE, "service": SMT.EKS_SERVICE,
+                "deployment": SMT.EKS_DEPLOYMENT, "ingress": SMT.EKS_INGRESS,
+                "hpa": SMT.EKS_HPA, "replicaset": SMT.EKS_REPLICASET,
+                "statefulset": SMT.EKS_STATEFULSET, "network_policy": SMT.EKS_NETWORK_POLICY,
+            },
+            "GKE": {
+                "namespace": SMT.GKE_NAMESPACE, "service": SMT.GKE_SERVICE,
+                "deployment": SMT.GKE_DEPLOYMENT, "ingress": SMT.GKE_INGRESS,
+                "hpa": SMT.GKE_HPA, "replicaset": SMT.GKE_REPLICASET,
+                "statefulset": SMT.GKE_STATEFULSET, "network_policy": SMT.GKE_NETWORK_POLICY,
+            },
+        }
+
+        types = type_map.get(prefix, {})
+        infra_dir = self.resources_dir / "infra_components"
+
+        lines = [f"# {prefix} Cluster ({name})", ""]
+
+        for resource_name, model_type in types.items():
+            items = assets.get(model_type, {})
+            if not items:
+                continue
+
+            lines.append(f"## {resource_name.replace('_', ' ').title()}s ({len(items)})")
+            lines.append("")
+
+            if resource_name == "deployment":
+                lines.extend([_table_row(["Name", "Replicas", "Image"]), _table_row(["---", "---", "---"])])
+                for uid, info in items.items():
+                    dname = info.get("name", uid) if isinstance(info, dict) else uid
+                    replicas = info.get("replicas", "") if isinstance(info, dict) else ""
+                    image = info.get("image", "") if isinstance(info, dict) else ""
+                    lines.append(_table_row([dname, str(replicas), str(image)[:100]]))
+            elif resource_name == "service":
+                lines.extend([_table_row(["Name", "Type", "Ports"]), _table_row(["---", "---", "---"])])
+                for uid, info in items.items():
+                    sname = info.get("name", uid) if isinstance(info, dict) else uid
+                    stype = info.get("type", "") if isinstance(info, dict) else ""
+                    ports = info.get("ports", "") if isinstance(info, dict) else ""
+                    lines.append(_table_row([sname, str(stype), str(ports)[:100]]))
+            elif resource_name == "namespace":
+                for uid, info in items.items():
+                    ns = info.get("name", uid) if isinstance(info, dict) else uid
+                    lines.append(f"- {ns}")
+            else:
+                lines.extend([_table_row(["Name", "Details"]), _table_row(["---", "---"])])
+                for uid, info in items.items():
+                    iname = info.get("name", uid) if isinstance(info, dict) else uid
+                    lines.append(_table_row([iname, ""]))
+
+            lines.append("")
+
+        self._write(infra_dir / f"{sanitize_filename(name)}.md", "\n".join(lines))
+
+    # ---- New Relic ----
+
+    def _generate_newrelic(self, name: str, ctype: str, assets: dict):
+        from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
+
+        lines = [f"# New Relic ({name})", ""]
+
+        policies = assets.get(SMT.NEW_RELIC_POLICY, {})
+        if policies:
+            lines.extend([f"## Alert Policies ({len(policies)})", "",
+                          _table_row(["Policy", "ID"]), _table_row(["---", "---"])])
+            for uid, info in policies.items():
+                pname = info.get("name", uid) if isinstance(info, dict) else uid
+                lines.append(_table_row([pname, uid]))
+            lines.append("")
+
+        entities = assets.get(SMT.NEW_RELIC_ENTITY, {})
+        if entities:
+            lines.extend([f"## Entities ({len(entities)})", "",
+                          _table_row(["Entity", "Type"]), _table_row(["---", "---"])])
+            for uid, info in entities.items():
+                ename = info.get("name", uid) if isinstance(info, dict) else uid
+                etype = info.get("type", "") if isinstance(info, dict) else ""
+                lines.append(_table_row([ename, str(etype)]))
+            lines.append("")
+
+        self._write(self.resources_dir / "tools" / f"{sanitize_filename(name)}-details.md", "\n".join(lines))
+
+    # ---- GitHub ----
+
+    def _generate_github(self, name: str, ctype: str, assets: dict):
+        from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
+
+        lines = [f"# GitHub ({name})", ""]
+
+        repos = assets.get(SMT.GITHUB_REPOSITORY, {})
+        if repos:
+            lines.extend([f"## Repositories ({len(repos)})", "",
+                          _table_row(["Repository", "Description"]), _table_row(["---", "---"])])
+            for uid, info in repos.items():
+                rname = info.get("name", uid) if isinstance(info, dict) else uid
+                desc = info.get("description", "") if isinstance(info, dict) else ""
+                lines.append(_table_row([rname, str(desc)[:200]]))
+            lines.append("")
+
+        members = assets.get(SMT.GITHUB_MEMBER, {})
+        if members:
+            lines.extend([f"## Members ({len(members)})", ""])
+            for uid, info in members.items():
+                mname = info.get("login", info.get("name", uid)) if isinstance(info, dict) else uid
+                lines.append(f"- {mname}")
+            lines.append("")
+
+        self._write(self.resources_dir / "tools" / f"{sanitize_filename(name)}-details.md", "\n".join(lines))
+
+    # ---- Databases ----
+
+    def _generate_database(self, name: str, ctype: str, assets: dict):
+        from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
+
+        table_types = {
+            SMT.POSTGRES_TABLE, SMT.CLICKHOUSE_TABLE, SMT.CLICKHOUSE_DATABASE,
+            SMT.SQL_DATABASE_TABLE, SMT.MONGODB_DATABASE, SMT.MONGODB_COLLECTION,
+        }
+
+        lines = [f"# Database ({name}) - {ctype}", ""]
+
+        for model_type, items in assets.items():
+            if not items:
+                continue
+            mt_name = _model_type_name(model_type)
+            lines.extend([f"## {mt_name} ({len(items)})", "",
+                          _table_row(["Name", "Details"]), _table_row(["---", "---"])])
+            for uid, info in items.items():
+                iname = info.get("name", info.get("table_name", uid)) if isinstance(info, dict) else uid
+                details = ""
+                if isinstance(info, dict):
+                    cols = info.get("columns", info.get("fields", []))
+                    if isinstance(cols, list):
+                        details = ", ".join(str(c)[:50] for c in cols[:10])
+                lines.append(_table_row([iname, details[:200]]))
+            lines.append("")
+
+        self._write(self.resources_dir / "infra_components" / f"{sanitize_filename(name)}.md", "\n".join(lines))
+
+    # ---- Search Indexes ----
+
+    def _generate_search_index(self, name: str, ctype: str, assets: dict):
+        from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
+
+        lines = [f"# {ctype} ({name})", ""]
+
+        for model_type, items in assets.items():
+            if not items:
+                continue
+            mt_name = _model_type_name(model_type)
+            lines.extend([f"## {mt_name} ({len(items)})", "",
+                          _table_row(["Index/Resource", "Details"]), _table_row(["---", "---"])])
+            for uid, info in items.items():
+                iname = info.get("name", uid) if isinstance(info, dict) else uid
+                lines.append(_table_row([iname, ""]))
+            lines.append("")
+
+        self._write(self.resources_dir / "infra_components" / f"{sanitize_filename(name)}.md", "\n".join(lines))
+
+    # ---- Azure ----
+
+    def _generate_azure(self, name: str, ctype: str, assets: dict):
+        lines = [f"# Azure ({name})", ""]
+
+        for model_type, items in assets.items():
+            if not items:
+                continue
+            mt_name = _model_type_name(model_type)
+            lines.extend([f"## {mt_name} ({len(items)})", "",
+                          _table_row(["Resource", "Details"]), _table_row(["---", "---"])])
+            for uid, info in items.items():
+                rname = info.get("name", uid) if isinstance(info, dict) else uid
+                rtype = info.get("type", info.get("resource_type", "")) if isinstance(info, dict) else ""
+                lines.append(_table_row([rname, str(rtype)[:200]]))
+            lines.append("")
+
+        self._write(self.resources_dir / "infra_components" / f"{sanitize_filename(name)}.md", "\n".join(lines))
+
+    # ---- SigNoz ----
+
+    def _generate_signoz(self, name: str, ctype: str, assets: dict):
+        from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
+
+        services = assets.get(SMT.SIGNOZ_SERVICE, {})
+        if services:
+            lines = [f"# SigNoz Services ({name})", "", f"**Total:** {len(services)}", "",
+                     _table_row(["Service"]), _table_row(["---"])]
+            for uid, info in services.items():
+                sname = info.get("name", uid) if isinstance(info, dict) else uid
+                lines.append(_table_row([sname]))
+            self._write(self.resources_dir / "services" / f"{sanitize_filename(name)}-services.md", "\n".join(lines))
+
+        dashboards = assets.get(SMT.SIGNOZ_DASHBOARD, {})
+        if dashboards:
+            lines = [f"# SigNoz Dashboards ({name})", "", f"**Total:** {len(dashboards)}", "",
+                     _table_row(["Dashboard", "ID"]), _table_row(["---", "---"])]
+            for uid, info in dashboards.items():
+                dname = info.get("title", info.get("name", uid)) if isinstance(info, dict) else uid
+                lines.append(_table_row([dname, uid]))
+            self._write(self.resources_dir / "dashboards" / f"{sanitize_filename(name)}-index.md", "\n".join(lines))
+
+    # ---- Generic fallback ----
+
+    def _generate_generic(self, name: str, ctype: str, assets: dict):
+        """Generic generator for connector types without specific handling."""
+        lines = [f"# {ctype} ({name})", ""]
+
+        for model_type, items in assets.items():
+            if not items:
+                continue
+            mt_name = _model_type_name(model_type)
+            lines.extend([f"## {mt_name} ({len(items)})", "",
+                          _table_row(["Name/ID", "Details"]), _table_row(["---", "---"])])
+            for uid, info in items.items():
+                if isinstance(info, dict):
+                    iname = info.get("name", info.get("title", uid))
+                    details = str({k: v for k, v in info.items() if k not in ("name", "title")})[:200]
+                else:
+                    iname = uid
+                    details = str(info)[:200]
+                lines.append(_table_row([iname, details]))
+            lines.append("")
+
+        self._write(self.resources_dir / "tools" / f"{sanitize_filename(name)}-details.md", "\n".join(lines))
+
+    # ---- Cross-service aggregation ----
+
+    def generate_service_crossref(self, all_results: dict[str, dict]):
+        """Generate services/*.md by cross-referencing service names across connectors.
+
+        Scans all connector assets for service-like entities and groups them by name.
+        """
+        from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
+
+        # Model types that represent "services"
+        service_model_types = {
+            SMT.DATADOG_SERVICE, SMT.SIGNOZ_SERVICE,
+            SMT.KUBERNETES_SERVICE, SMT.EKS_SERVICE, SMT.GKE_SERVICE,
+            SMT.KUBERNETES_DEPLOYMENT, SMT.EKS_DEPLOYMENT, SMT.GKE_DEPLOYMENT,
+            SMT.ECS_SERVICE, SMT.GRAFANA_TEMPO_SERVICE,
+            SMT.GCP_CLOUD_RUN_SERVICE,
+        }
+
+        # Collect: service_name -> [{connector, connector_type, model_type, info}]
+        service_map: dict[str, list[dict]] = {}
+
+        for connector_name, result in all_results.items():
+            if result.get("error"):
+                continue
+            ctype = result.get("connector_type", "")
+            assets = result.get("assets", {})
+
+            for model_type, items in assets.items():
+                if model_type not in service_model_types:
+                    continue
+                if not isinstance(items, dict):
+                    continue
+
+                for uid, info in items.items():
+                    if isinstance(info, dict):
+                        svc_name = info.get("name", info.get("service_name", uid))
+                    else:
+                        svc_name = uid
+
+                    # Normalize name
+                    svc_name_normalized = str(svc_name).strip().lower()
+                    if not svc_name_normalized:
+                        continue
+
+                    if svc_name_normalized not in service_map:
+                        service_map[svc_name_normalized] = []
+
+                    service_map[svc_name_normalized].append({
+                        "connector": connector_name,
+                        "connector_type": ctype,
+                        "model_type": _model_type_name(model_type),
+                        "display_name": str(svc_name),
+                    })
+
+        if not service_map:
+            return
+
+        # Generate index
+        index_lines = [
+            "# Discovered Services",
+            "",
+            f"**Total unique services:** {len(service_map)}",
+            "",
+            _table_row(["Service", "Found In", "Resource Types"]),
+            _table_row(["---", "---", "---"]),
+        ]
+
+        for svc_name in sorted(service_map.keys()):
+            entries = service_map[svc_name]
+            display = entries[0]["display_name"]
+            connectors = ", ".join(sorted(set(e["connector"] for e in entries)))
+            types = ", ".join(sorted(set(e["model_type"] for e in entries)))
+            index_lines.append(_table_row([display, connectors, types]))
+
+        self._write(self.resources_dir / "services" / "index.md", "\n".join(index_lines))
+
+        # Generate per-service files for services that appear in 2+ connectors
+        for svc_name, entries in service_map.items():
+            unique_connectors = set(e["connector"] for e in entries)
+            if len(unique_connectors) < 2:
+                continue
+
+            display = entries[0]["display_name"]
+            lines = [
+                f"# {display}",
+                "",
+                "## Where to Find Data",
+                "",
+                _table_row(["Tool", "Type", "Resource"]),
+                _table_row(["---", "---", "---"]),
+            ]
+
+            for entry in entries:
+                lines.append(_table_row([
+                    entry["connector"],
+                    entry["connector_type"],
+                    entry["model_type"],
+                ]))
+
+            lines.append("")
+            self._write(
+                self.resources_dir / "services" / f"{sanitize_filename(display)}.md",
+                "\n".join(lines),
+            )
+
+    # ---- Overview ----
+
+    def generate_overview(self, all_results: dict[str, dict]):
+        """Generate the top-level overview.md summarizing all connectors.
+
+        Args:
+            all_results: {connector_name: {connector_type: str, assets: dict, error: str|None}}
+        """
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        lines = [
+            "# Infrastructure Overview",
+            "",
+            f"Last synced: {now}",
+            "",
+            "## Connected Tools",
+            "",
+            _table_row(["Tool", "Type", "Status", "Resources Discovered"]),
+            _table_row(["---", "---", "---", "---"]),
+        ]
+
+        for name, result in sorted(all_results.items()):
+            ctype = result.get("connector_type", "UNKNOWN")
+            error = result.get("error")
+
+            if error:
+                lines.append(_table_row([name, ctype, "FAILED", str(error)[:100]]))
+            else:
+                assets = result.get("assets", {})
+                summary_parts = []
+                for model_type, items in assets.items():
+                    if items:
+                        mt_name = _model_type_name(model_type)
+                        summary_parts.append(f"{len(items)} {mt_name}")
+                summary = ", ".join(summary_parts[:5])
+                if len(summary_parts) > 5:
+                    summary += f", +{len(summary_parts) - 5} more"
+                lines.append(_table_row([name, ctype, "OK", summary]))
+
+        lines.extend([
+            "",
+            "## Directory Structure",
+            "",
+            "```",
+            "resources/",
+            "  tools/           - Per-connector summaries",
+            "  dashboards/      - Dashboard details with panels and queries",
+            "  services/        - Discovered services across all sources",
+            "  infra_components/- K8s resources, cloud infra, databases",
+            "  alert_definitions/- Alert rules and monitors",
+            "  log_query_samples/- Log groups and example queries",
+            "  panels/          - Individual panel details",
+            "  runbooks/        - User-written runbooks",
+            "```",
+            "",
+            "## How to Use This Context",
+            "",
+            "Add to your CLAUDE.md or agent prompt:",
+            "",
+            "```",
+            "My production infrastructure context is in ./resources/.",
+            "Refer to this when investigating issues, writing queries, or understanding system topology.",
+            "```",
+            "",
+        ])
+
+        self._write(self.resources_dir / "overview.md", "\n".join(lines))

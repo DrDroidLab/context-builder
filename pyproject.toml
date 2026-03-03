@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "droidctx"
+version = "0.1.0"
+description = "Infrastructure context builder for Claude Code and coding agents"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "DrDroid Labs", email = "support@drdroid.io"}
+]
+keywords = ["infrastructure", "context", "claude-code", "observability", "coding-agents"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Monitoring",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+    "Jinja2>=3.1.0",
+    "PyYAML>=6.0.0",
+    "drdroid-debug-toolkit @ git+https://github.com/DrDroidLab/drdroid-debug-toolkit.git@master",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[project.scripts]
+droidctx = "droidctx.main:app"
+
+[project.urls]
+Homepage = "https://github.com/DrDroidLab/context-builder"
+Repository = "https://github.com/DrDroidLab/context-builder"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["droidctx*"]

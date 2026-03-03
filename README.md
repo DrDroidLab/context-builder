@@ -1,0 +1,176 @@
+# droidctx
+
+Infrastructure context builder for Claude Code and coding agents.
+
+Connect your production tools (Grafana, Datadog, Kubernetes, CloudWatch, databases, etc.), extract metadata, and generate structured `.md` files that give AI agents deep understanding of your system topology.
+
+## Quick Start
+
+```bash
+# Install
+curl -fsSL https://raw.githubusercontent.com/DrDroidLab/context-builder/main/install.sh | bash
+
+# Or via pip
+pip install git+https://github.com/DrDroidLab/context-builder.git
+```
+
+```bash
+# 1. Initialize project
+droidctx init --path ./my-infra
+
+# 2. Add your credentials
+vim ./my-infra/credentials.yaml
+
+# 3. Sync infrastructure metadata
+droidctx sync --keyfile ./my-infra/credentials.yaml
+
+# 4. Add the suggested prompt to your CLAUDE.md
+```
+
+## Commands
+
+### `droidctx init`
+
+Creates folder structure and a credentials template.
+
+```bash
+droidctx init --path ./my-infra
+```
+
+### `droidctx sync`
+
+Connects to your tools, extracts metadata, and generates `.md` context files.
+
+```bash
+droidctx sync --keyfile ./my-infra/credentials.yaml
+
+# Sync specific connectors only
+droidctx sync --keyfile creds.yaml --connectors grafana_prod,k8s_prod
+
+# Preview what would be synced
+droidctx sync --keyfile creds.yaml --dry-run
+
+# Verbose logging
+droidctx sync --keyfile creds.yaml --verbose
+```
+
+### `droidctx check`
+
+Validates credentials format and checks for required CLI tools.
+
+```bash
+droidctx check --keyfile ./my-infra/credentials.yaml
+```
+
+### `droidctx list-connectors`
+
+Shows all supported connector types and their required fields.
+
+```bash
+droidctx list-connectors
+droidctx list-connectors --type GRAFANA
+```
+
+## Credentials Format
+
+Create a YAML file with your connector credentials. Run `droidctx init` to generate a template with all supported types.
+
+```yaml
+grafana_prod:
+  type: "GRAFANA"
+  grafana_host: https://your-grafana.com
+  grafana_api_key: glsa_xxxxxxxxxxxx
+
+datadog_prod:
+  type: "DATADOG"
+  dd_api_key: your_api_key
+  dd_app_key: your_app_key
+
+k8s_production:
+  type: "KUBERNETES"
+  cluster_name: prod-cluster
+  cluster_api_server: https://k8s-api.example.com
+  cluster_token: eyJhbGciOiJSUzI1NiIs...
+
+cloudwatch_us:
+  type: "CLOUDWATCH"
+  region: us-east-1
+  aws_access_key: AKIAIOSFODNN7EXAMPLE
+  aws_secret_key: wJalrXUtnFEMI/K7MDENG...
+
+postgres_main:
+  type: "POSTGRES"
+  host: db.example.com
+  port: 5432
+  database: production
+  user: readonly_user
+  password: secret
+```
+
+## Supported Connectors (25)
+
+| Category | Connectors |
+|----------|-----------|
+| **Monitoring** | Grafana, Datadog, New Relic, CloudWatch, SigNoz, Sentry |
+| **Kubernetes** | Kubernetes, EKS, GKE |
+| **Cloud** | Azure, GCM (Google Cloud Monitoring) |
+| **Databases** | PostgreSQL, MongoDB, ClickHouse, Generic SQL |
+| **Search** | Elasticsearch, OpenSearch |
+| **CI/CD** | GitHub, ArgoCD, Jenkins |
+| **Project Management** | Jira Cloud |
+| **Logs** | Grafana Loki, Victoria Logs, Coralogix, PostHog |
+
+## Output Structure
+
+After running `droidctx sync`, your context directory will contain:
+
+```
+my-infra/
+  resources/
+    overview.md              # Summary of all connected tools
+    tools/                   # Per-connector summaries
+      grafana_prod.md
+      k8s_production.md
+    dashboards/              # Dashboard details with panels and queries
+      grafana_prod-index.md
+      grafana_prod/
+        api-gateway.md
+        payment-service.md
+    services/                # Cross-tool service aggregation
+      index.md
+      payment-service.md     # Shows where this service appears across tools
+    infra_components/        # K8s resources, cloud infra, databases
+      k8s_production.md
+      postgres_main.md
+    alert_definitions/       # Alert rules and monitors
+      datadog_prod.md
+      grafana_prod.md
+    log_query_samples/       # Log groups and example queries
+      cloudwatch_us.md
+    runbooks/                # Placeholder for your runbooks
+```
+
+## Using with Claude Code
+
+After syncing, add this to your `CLAUDE.md`:
+
+```
+My production infrastructure context is in ./my-infra/resources/.
+Refer to this when investigating issues, writing queries, or understanding system topology.
+```
+
+Your agent will now know:
+- Which dashboards exist and what metrics they track
+- What services are running and where they're deployed
+- Which alerts are configured and what they monitor
+- What database tables/schemas exist
+- How to write queries for your specific tools
+
+## Requirements
+
+- Python >= 3.9
+- Some connectors require CLI tools: `kubectl` (Kubernetes), `aws` (CloudWatch/EKS), `az` (Azure), `gcloud` (GKE/GCM)
+
+## License
+
+MIT
