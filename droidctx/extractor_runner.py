@@ -1,6 +1,5 @@
 """Wraps drdroid-debug-toolkit metadata extractors for standalone use."""
 
-import io
 import logging
 import os
 import sys
@@ -16,6 +15,11 @@ from droidctx.credential_mapper import get_source_enum, yaml_creds_to_extractor_
 logger = logging.getLogger(__name__)
 
 _datadog_patched = False
+
+# Methods to skip per connector type (slow or redundant)
+SKIP_METHODS = {
+    "DATADOG": {"extract_metrics"},  # Redundant with extract_services, very slow
+}
 
 
 def _patch_datadog_unstable_ops():
@@ -40,6 +44,27 @@ def _patch_datadog_unstable_ops():
 
         _UnstableOperations.__setitem__ = _safe_setitem
         _datadog_patched = True
+    except ImportError:
+        pass
+
+
+_datadog_metrics_patched = False
+
+
+def _patch_datadog_skip_metric_tags():
+    """Patch DatadogApiProcessor.fetch_metrics to return empty.
+
+    extract_services fetches ALL metrics then calls fetch_metric_tags per metric
+    (thousands of sequential API calls). For context building we only need the
+    service map, not per-metric tags. This makes extract_services finish in seconds.
+    """
+    global _datadog_metrics_patched
+    if _datadog_metrics_patched:
+        return
+    try:
+        from drdroid_debug_toolkit.core.integrations.source_api_processors.datadog_api_processor import DatadogApiProcessor
+        DatadogApiProcessor.fetch_metrics = lambda self: {"data": []}
+        _datadog_metrics_patched = True
     except ImportError:
         pass
 
@@ -102,6 +127,10 @@ def run_extractor(
     # Patch datadog-api-client unstable_operations to silently ignore unknown keys
     _patch_datadog_unstable_ops()
 
+    # For Datadog: skip per-metric tag fetching in extract_services (thousands of API calls)
+    if connector_type == "DATADOG":
+        _patch_datadog_skip_metric_tags()
+
     # Instantiate extractor (no api_host/api_token = standalone mode)
     # Suppress stdout during init — toolkit prints debug noise
     request_id = str(uuid.uuid4())
@@ -125,6 +154,8 @@ def run_extractor(
 
     # Discover and run all extract_* methods
     methods = get_extract_methods(extractor)
+    skip = SKIP_METHODS.get(connector_type, set())
+    methods = [m for m in methods if m not in skip]
     results_summary = {}
 
     for method_name in sorted(methods):
