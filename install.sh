@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# droidctx installer
+# droidctx installer v2
 # Usage: curl -fsSL https://raw.githubusercontent.com/DrDroidLab/context-builder/main/install.sh | bash
 set -euo pipefail
 
