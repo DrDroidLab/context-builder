@@ -103,7 +103,7 @@ class MarkdownGenerator:
             "ARGOCD": self._generate_generic,
             "JENKINS": self._generate_generic,
             "SIGNOZ": self._generate_signoz,
-            "SENTRY": self._generate_generic,
+            "SENTRY": self._generate_sentry,
             "AZURE": self._generate_azure,
             "POSTHOG": self._generate_generic,
             "VICTORIA_LOGS": self._generate_generic,
@@ -1038,6 +1038,28 @@ class MarkdownGenerator:
             lines.append("")
 
         self._write(cdir / "indices.md", "\n".join(lines))
+
+    # ---- Sentry ----
+
+    def _generate_sentry(self, name: str, ctype: str, assets: dict):
+        from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
+
+        cdir = self._connector_dir(name)
+
+        projects = assets.get(SMT.SENTRY_PROJECT, {})
+        if projects:
+            lines = [f"# Sentry Projects ({name})", "", f"**Total:** {len(projects)}", "",
+                     _table_row(["Project", "Slug", "Platform", "Status"]),
+                     _table_row(["---", "---", "---", "---"])]
+            for uid, info in projects.items():
+                if isinstance(info, dict):
+                    lines.append(_table_row([
+                        info.get("name", uid),
+                        str(info.get("slug", "")),
+                        str(info.get("platform", "")),
+                        str(info.get("status", "")),
+                    ]))
+            self._write(cdir / "projects.md", "\n".join(lines))
 
     # ---- Azure ----
 
