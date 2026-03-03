@@ -5,6 +5,7 @@ set -euo pipefail
 
 REPO="https://github.com/DrDroidLab/context-builder.git"
 MIN_PYTHON="3.9"
+INSTALL_DIR="$HOME/.droidctx"
 
 info()  { printf "\033[1;34m==>\033[0m %s\n" "$*"; }
 warn()  { printf "\033[1;33mWARN:\033[0m %s\n" "$*"; }
@@ -31,6 +32,33 @@ check_python() {
     return 1
 }
 
+# --- Add to PATH helper ---
+add_to_path() {
+    local bin_dir="$1"
+    local shell_rc=""
+
+    if [ -f "$HOME/.zshrc" ]; then
+        shell_rc="$HOME/.zshrc"
+    elif [ -f "$HOME/.bashrc" ]; then
+        shell_rc="$HOME/.bashrc"
+    elif [ -f "$HOME/.bash_profile" ]; then
+        shell_rc="$HOME/.bash_profile"
+    fi
+
+    if [ -n "$shell_rc" ]; then
+        if ! grep -q "$bin_dir" "$shell_rc" 2>/dev/null; then
+            echo "" >> "$shell_rc"
+            echo "# droidctx" >> "$shell_rc"
+            echo "export PATH=\"$bin_dir:\$PATH\"" >> "$shell_rc"
+            info "Added $bin_dir to PATH in $shell_rc"
+            warn "Run 'source $shell_rc' or open a new terminal to use droidctx"
+        fi
+    else
+        warn "Could not find shell rc file. Add this to your shell profile:"
+        echo "  export PATH=\"$bin_dir:\$PATH\""
+    fi
+}
+
 # --- Main ---
 info "Installing droidctx - Infrastructure context builder for coding agents"
 echo ""
@@ -40,29 +68,43 @@ if ! check_python; then
 fi
 info "Found Python: $PYTHON_CMD ($($PYTHON_CMD --version 2>&1))"
 
-# Prefer pipx for isolated install
+# Strategy 1: pipx (best isolation)
 if command -v pipx &>/dev/null; then
     info "Installing with pipx (isolated environment)..."
     pipx install "git+${REPO}" 2>&1
     echo ""
     info "Installed! Run: droidctx --help"
 
-elif command -v pip3 &>/dev/null; then
-    info "pipx not found, installing with pip3..."
-    warn "Consider installing pipx for better isolation: https://pipx.pypa.io/"
-    pip3 install "git+${REPO}" 2>&1
-    echo ""
-    info "Installed! Run: droidctx --help"
-
-elif command -v pip &>/dev/null; then
-    info "Installing with pip..."
-    warn "Consider installing pipx for better isolation: https://pipx.pypa.io/"
-    pip install "git+${REPO}" 2>&1
-    echo ""
-    info "Installed! Run: droidctx --help"
-
+# Strategy 2: Create a dedicated venv (works on externally-managed Python)
 else
-    error "Neither pipx nor pip found. Please install pip first."
+    info "Creating isolated environment at $INSTALL_DIR..."
+    rm -rf "$INSTALL_DIR"
+    "$PYTHON_CMD" -m venv "$INSTALL_DIR"
+
+    info "Installing droidctx into $INSTALL_DIR..."
+    "$INSTALL_DIR/bin/pip" install --upgrade pip -q 2>&1
+    "$INSTALL_DIR/bin/pip" install "git+${REPO}" 2>&1
+
+    # Symlink binary to ~/.local/bin
+    LOCAL_BIN="$HOME/.local/bin"
+    mkdir -p "$LOCAL_BIN"
+    ln -sf "$INSTALL_DIR/bin/droidctx" "$LOCAL_BIN/droidctx"
+
+    # Ensure ~/.local/bin is in PATH
+    if ! echo "$PATH" | tr ':' '\n' | grep -q "^$LOCAL_BIN$"; then
+        add_to_path "$LOCAL_BIN"
+    fi
+
+    echo ""
+    info "Installed! Binary at: $LOCAL_BIN/droidctx"
+
+    # Test if it's reachable
+    if command -v droidctx &>/dev/null; then
+        info "droidctx is ready. Run: droidctx --help"
+    else
+        info "Run: $LOCAL_BIN/droidctx --help"
+        warn "Or open a new terminal for PATH to take effect"
+    fi
 fi
 
 echo ""
