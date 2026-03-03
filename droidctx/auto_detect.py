@@ -162,49 +162,16 @@ def detect_gcloud() -> list[dict[str, Any]]:
                     "gke_zone": czone,
                 })
 
-    # GCM connector needs service account JSON — note it as needing manual completion
-    connectors.append({
-        "_connector_name": f"gcm_{project_id}",
-        "type": "GCM",
-        "gcp_project_id": project_id,
-        "gcp_service_account_json": "",  # Needs manual entry
-        "_needs_manual": ["gcp_service_account_json"],
-    })
-
     return connectors
 
 
 def detect_az() -> list[dict[str, Any]]:
     """Detect Azure configuration from az CLI.
 
-    Returns Azure connector config (secrets need manual entry).
+    Azure requires client_id/client_secret which can't be auto-detected.
+    Returns empty — hints are provided via get_manual_hints() instead.
     """
-    if not check_cli_tool("az"):
-        return []
-
-    connectors = []
-
-    account = _run_cmd_json(["az", "account", "show"])
-    if not account:
-        return []
-
-    tenant_id = account.get("tenantId", "")
-    subscription_id = account.get("id", "")
-    sub_name = account.get("name", "default")
-
-    safe_name = sub_name.replace(" ", "-").lower()
-
-    connectors.append({
-        "_connector_name": f"azure_{safe_name}",
-        "type": "AZURE",
-        "azure_tenant_id": tenant_id,
-        "azure_client_id": "",  # Needs manual entry
-        "azure_client_secret": "",  # Needs manual entry
-        "azure_subscription_id": subscription_id,
-        "_needs_manual": ["azure_client_id", "azure_client_secret"],
-    })
-
-    return connectors
+    return []
 
 
 ALL_DETECTORS = [
@@ -215,8 +182,26 @@ ALL_DETECTORS = [
 ]
 
 
-def run_all_detectors() -> list[dict[str, Any]]:
-    """Run all CLI tool detectors and return discovered connectors."""
+def get_manual_hints() -> list[str]:
+    """Return hints for CLI tools that are configured but can't be fully auto-detected."""
+    hints = []
+
+    if check_cli_tool("gcloud"):
+        project_id = _run_cmd(["gcloud", "config", "get-value", "project"])
+        if project_id and project_id != "(unset)":
+            hints.append(f"GCM (Google Cloud Monitoring): gcloud found (project={project_id}), add manually with type: GCM")
+
+    if check_cli_tool("az"):
+        account = _run_cmd_json(["az", "account", "show"])
+        if account:
+            sub_name = account.get("name", "unknown")
+            hints.append(f"AZURE: az CLI found (subscription={sub_name}), add manually with type: AZURE")
+
+    return hints
+
+
+def run_all_detectors() -> tuple[list[dict[str, Any]], list[str]]:
+    """Run all CLI tool detectors and return (connectors, manual_hints)."""
     all_connectors = []
 
     for tool_name, detector in ALL_DETECTORS:
@@ -226,7 +211,8 @@ def run_all_detectors() -> list[dict[str, Any]]:
         except Exception as e:
             logger.warning(f"Detector for {tool_name} failed: {e}")
 
-    return all_connectors
+    hints = get_manual_hints()
+    return all_connectors, hints
 
 
 def merge_into_credentials(
@@ -243,14 +229,8 @@ def merge_into_credentials(
 
     for connector in detected:
         name = connector.pop("_connector_name")
-        needs_manual = connector.pop("_needs_manual", None)
 
         if name in merged:
-            skipped.append(name)
-            continue
-
-        # Don't write connectors that have empty required fields
-        if needs_manual:
             skipped.append(name)
             continue
 

@@ -187,66 +187,59 @@ def detect(
     # Run detectors
     console.print("[bold]Scanning for CLI tools...[/]\n")
 
-    detected = run_all_detectors()
+    detected, hints = run_all_detectors()
 
-    if not detected:
+    if not detected and not hints:
         console.print("[yellow]No configured CLI tools detected.[/]")
         console.print("[dim]Checked: kubectl, aws, gcloud, az[/]\n")
         console.print("You can manually configure connectors in:")
         console.print(f"  [bold]{keyfile}[/]\n")
         return
 
-    # Show what was detected
-    table = Table(title="Detected Connectors")
-    table.add_column("Connector", style="bold")
-    table.add_column("Type")
-    table.add_column("Details")
-    table.add_column("Status")
+    # Show detected connectors
+    if detected:
+        table = Table(title="Detected Connectors")
+        table.add_column("Connector", style="bold")
+        table.add_column("Type")
+        table.add_column("Details")
+        table.add_column("Status")
 
-    needs_manual = []
-    for conn in detected:
-        name = conn["_connector_name"]
-        ctype = conn["type"]
-        manual_fields = conn.get("_needs_manual", [])
+        for conn in detected:
+            name = conn["_connector_name"]
+            ctype = conn["type"]
 
-        # Build details string
-        details_parts = []
-        for k, v in conn.items():
-            if k.startswith("_") or k == "type" or not v:
-                continue
-            details_parts.append(f"{k}={v}")
-        details = ", ".join(details_parts[:3])
+            details_parts = []
+            for k, v in conn.items():
+                if k.startswith("_") or k == "type" or not v:
+                    continue
+                details_parts.append(f"{k}={v}")
+            details = ", ".join(details_parts[:3])
 
-        if name in existing:
-            table.add_row(name, ctype, details, "[dim]already exists[/]")
-        elif manual_fields:
-            table.add_row(name, ctype, details, f"[yellow]needs: {', '.join(manual_fields)}[/]")
-            needs_manual.append((name, manual_fields))
-        else:
-            table.add_row(name, ctype, details, "[green]ready[/]")
+            if name in existing:
+                table.add_row(name, ctype, details, "[dim]already exists[/]")
+            else:
+                table.add_row(name, ctype, details, "[green]ready[/]")
 
-    console.print(table)
-    console.print()
+        console.print(table)
+        console.print()
 
     # Merge and save
     merged, added, skipped = merge_into_credentials(detected, existing)
 
-    if not added:
-        if needs_manual:
-            console.print("[dim]No complete connectors to add.[/]")
-        else:
-            console.print("[dim]No new connectors to add (all already exist in credentials file).[/]")
-    else:
+    if added:
         save_credentials(merged, keyfile)
-
         console.print(f"[bold green]Added {len(added)} connector(s) to {keyfile}[/]")
         for name in added:
             console.print(f"  + {name}")
+    elif detected:
+        console.print("[dim]No new connectors to add (all already exist in credentials file).[/]")
 
-    if needs_manual:
-        console.print(f"\n[yellow]Not added (needs manual config in {keyfile}):[/]")
-        for name, fields in needs_manual:
-            console.print(f"  {name}: add {', '.join(fields)}")
+    # Show hints for tools that need manual configuration
+    if hints:
+        console.print()
+        for hint in hints:
+            console.print(f"[dim]  {hint}[/]")
+        console.print(f"[dim]  Edit {keyfile} to add these manually.[/]")
 
     console.print(f"\nNext: [bold]droidctx sync -k {keyfile}[/]")
     console.print()

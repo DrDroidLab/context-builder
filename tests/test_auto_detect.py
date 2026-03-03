@@ -122,7 +122,7 @@ class TestDetectGcloud:
 
         result = detect_gcloud()
         assert any(c["type"] == "GKE" for c in result)
-        assert any(c["type"] == "GCM" for c in result)
+        assert not any(c["type"] == "GCM" for c in result)  # GCM needs manual config
 
     @patch("droidctx.auto_detect._run_cmd", return_value="(unset)")
     @patch("droidctx.auto_detect.check_cli_tool", return_value=True)
@@ -135,21 +135,9 @@ class TestDetectAz:
     def test_az_not_installed(self, mock_check):
         assert detect_az() == []
 
-    @patch("droidctx.auto_detect._run_cmd_json")
-    @patch("droidctx.auto_detect.check_cli_tool", return_value=True)
-    def test_az_detected(self, mock_check, mock_json):
-        mock_json.return_value = {
-            "tenantId": "tenant-123",
-            "id": "sub-456",
-            "name": "My Subscription",
-        }
-
-        result = detect_az()
-        assert len(result) == 1
-        assert result[0]["type"] == "AZURE"
-        assert result[0]["azure_tenant_id"] == "tenant-123"
-        assert result[0]["azure_subscription_id"] == "sub-456"
-        assert result[0]["_needs_manual"] == ["azure_client_id", "azure_client_secret"]
+    def test_az_returns_empty(self):
+        # Azure can't be auto-detected (needs client_id/secret), always returns empty
+        assert detect_az() == []
 
 
 class TestMergeIntoCredentials:
@@ -183,16 +171,15 @@ class TestMergeIntoCredentials:
         merged, added, _ = merge_into_credentials(detected, {})
         assert "_connector_name" not in merged["k8s"]
 
-    def test_skips_needs_manual(self):
+    def test_multiple_connectors(self):
         detected = [
-            {"_connector_name": "azure_sub", "_needs_manual": ["client_id"], "type": "AZURE", "azure_tenant_id": "t"},
             {"_connector_name": "k8s", "type": "KUBERNETES", "_cli_mode": True, "cluster_name": "c"},
+            {"_connector_name": "cw", "type": "CLOUDWATCH", "region": "us-east-1"},
         ]
         merged, added, skipped = merge_into_credentials(detected, {})
-        assert "azure_sub" not in merged
-        assert "azure_sub" in skipped
         assert "k8s" in merged
-        assert added == ["k8s"]
+        assert "cw" in merged
+        assert added == ["k8s", "cw"]
 
 
 class TestSaveCredentials:
@@ -214,24 +201,23 @@ class TestSaveCredentials:
 
 
 class TestRunAllDetectors:
+    @patch("droidctx.auto_detect.get_manual_hints", return_value=[])
     @patch("droidctx.auto_detect.ALL_DETECTORS", [
         ("kubectl", lambda: [{"_connector_name": "k8s_test", "type": "KUBERNETES", "_cli_mode": True, "cluster_name": "test"}]),
         ("aws", lambda: []),
     ])
-    def test_aggregates_results(self):
-        results = run_all_detectors()
-        assert len(results) == 1
-        assert results[0]["type"] == "KUBERNETES"
+    def test_aggregates_results(self, mock_hints):
+        connectors, hints = run_all_detectors()
+        assert len(connectors) == 1
+        assert connectors[0]["type"] == "KUBERNETES"
+        assert hints == []
 
-    def _boom():
-        raise Exception("boom")
-
+    @patch("droidctx.auto_detect.get_manual_hints", return_value=[])
     @patch("droidctx.auto_detect.ALL_DETECTORS", [
         ("bad_tool", lambda: (_ for _ in ()).throw(Exception("boom"))),
         ("aws", lambda: []),
     ])
-    def test_handles_detector_failure(self):
-        # Should not raise, just skip the failing detector
-        results = run_all_detectors()
-        assert isinstance(results, list)
-        assert results == []
+    def test_handles_detector_failure(self, mock_hints):
+        connectors, hints = run_all_detectors()
+        assert isinstance(connectors, list)
+        assert connectors == []

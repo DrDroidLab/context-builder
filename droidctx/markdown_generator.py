@@ -40,6 +40,24 @@ def _model_type_name(model_type) -> str:
         return str(model_type)
 
 
+def _is_ephemeral_name(name: str) -> bool:
+    """Check if a service name looks like an ephemeral pod/job name.
+
+    Filters out names with random suffixes like 'cron-tg5mg', 'web-7b4d6f8c9-xlk2p',
+    or hex hashes that indicate K8s-generated pod names rather than real services.
+    """
+    # K8s pod suffix: ends with -<5 alphanum> (e.g. cron-tg5mg)
+    if re.match(r'^.+-[a-z0-9]{5}$', name):
+        return True
+    # K8s replicaset pod: ends with -<8-10 hex>-<5 alphanum> (e.g. web-7b4d6f8c9-xlk2p)
+    if re.match(r'^.+-[a-f0-9]{8,10}-[a-z0-9]{5}$', name):
+        return True
+    # Pure hex hash (e.g. a3f8c2d1e5)
+    if re.match(r'^[a-f0-9]{8,}$', name):
+        return True
+    return False
+
+
 class MarkdownGenerator:
     """Generates .md files from extracted infrastructure assets."""
 
@@ -201,18 +219,21 @@ class MarkdownGenerator:
                 lines.append(_table_row([mname, mtype, tags]))
             self._write(self.resources_dir / "alert_definitions" / f"{sanitize_filename(name)}.md", "\n".join(lines))
 
-        # Services
+        # Services (filter out ephemeral pod/job names)
         services = assets.get(SMT.DATADOG_SERVICE, {})
         if services:
-            lines = [f"# Datadog Services ({name})", "", f"**Total:** {len(services)}", "",
-                     _table_row(["Service", "Details"]), _table_row(["---", "---"])]
-            for uid, info in services.items():
-                sname = info.get("name", uid) if isinstance(info, dict) else uid
-                details = ""
-                if isinstance(info, dict):
-                    details = str({k: v for k, v in info.items() if k != "name"})[:200]
-                lines.append(_table_row([sname, details]))
-            self._write(self.resources_dir / "services" / f"{sanitize_filename(name)}-services.md", "\n".join(lines))
+            filtered = {uid: info for uid, info in services.items()
+                        if not _is_ephemeral_name(str(info.get("name", uid) if isinstance(info, dict) else uid))}
+            if filtered:
+                lines = [f"# Datadog Services ({name})", "", f"**Total:** {len(filtered)}", "",
+                         _table_row(["Service", "Details"]), _table_row(["---", "---"])]
+                for uid, info in filtered.items():
+                    sname = info.get("name", uid) if isinstance(info, dict) else uid
+                    details = ""
+                    if isinstance(info, dict):
+                        details = str({k: v for k, v in info.items() if k != "name"})[:200]
+                    lines.append(_table_row([sname, details]))
+                self._write(self.resources_dir / "services" / f"{sanitize_filename(name)}-services.md", "\n".join(lines))
 
         # Dashboards
         dashboards = assets.get(SMT.DATADOG_DASHBOARD, {})
@@ -546,9 +567,11 @@ class MarkdownGenerator:
                     else:
                         svc_name = uid
 
-                    # Normalize name
+                    # Normalize name and skip ephemeral pod/job names
                     svc_name_normalized = str(svc_name).strip().lower()
                     if not svc_name_normalized:
+                        continue
+                    if _is_ephemeral_name(svc_name_normalized):
                         continue
 
                     if svc_name_normalized not in service_map:
