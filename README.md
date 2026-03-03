@@ -18,14 +18,14 @@ python3 -m venv ~/.droidctx && ~/.droidctx/bin/pip install git+https://github.co
 ```
 
 ```bash
-# 1. Initialize project
-droidctx init --path ./my-infra
+# 1. Initialize project (creates ./droidctx-context/)
+droidctx init
 
 # 2. Add your credentials
-vim ./my-infra/credentials.yaml
+vim ./droidctx-context/credentials.yaml
 
 # 3. Sync infrastructure metadata
-droidctx sync --keyfile ./my-infra/credentials.yaml
+droidctx sync
 
 # 4. Add the suggested prompt to your CLAUDE.md
 ```
@@ -37,7 +37,8 @@ droidctx sync --keyfile ./my-infra/credentials.yaml
 Creates folder structure and a credentials template.
 
 ```bash
-droidctx init --path ./my-infra
+droidctx init                      # Creates ./droidctx-context/
+droidctx init --path ./my-infra    # Custom path
 ```
 
 ### `droidctx sync`
@@ -45,16 +46,11 @@ droidctx init --path ./my-infra
 Connects to your tools, extracts metadata, and generates `.md` context files.
 
 ```bash
-droidctx sync --keyfile ./my-infra/credentials.yaml
-
-# Sync specific connectors only
-droidctx sync --keyfile creds.yaml --connectors grafana_prod,k8s_prod
-
-# Preview what would be synced
-droidctx sync --keyfile creds.yaml --dry-run
-
-# Verbose logging
-droidctx sync --keyfile creds.yaml --verbose
+droidctx sync                                  # Uses ./droidctx-context/credentials.yaml
+droidctx sync --keyfile ./my-infra/creds.yaml   # Custom keyfile
+droidctx sync --connectors grafana_prod,k8s_prod  # Sync specific connectors
+droidctx sync --dry-run                         # Preview what would be synced
+droidctx sync --verbose                         # Verbose logging
 ```
 
 ### `droidctx check`
@@ -62,7 +58,8 @@ droidctx sync --keyfile creds.yaml --verbose
 Validates credentials format and checks for required CLI tools.
 
 ```bash
-droidctx check --keyfile ./my-infra/credentials.yaml
+droidctx check                                 # Uses ./droidctx-context/credentials.yaml
+droidctx check --keyfile ./my-infra/creds.yaml  # Custom keyfile
 ```
 
 ### `droidctx list-connectors`

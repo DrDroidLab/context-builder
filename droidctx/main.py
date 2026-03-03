@@ -71,13 +71,13 @@ def init(
     console.print(f"\n[bold green]Initialized droidctx context at:[/] {path}\n")
     console.print("Next steps:")
     console.print(f"  1. Edit credentials:  [bold]{creds_file}[/]")
-    console.print(f"  2. Sync metadata:     [bold]droidctx sync --keyfile {creds_file}[/]")
+    console.print(f"  2. Sync metadata:     [bold]droidctx sync[/]")
     console.print()
 
 
 @app.command()
 def sync(
-    keyfile: Path = typer.Option(..., "--keyfile", "-k", help="Path to credentials YAML file"),
+    keyfile: Path = typer.Option(Path("./droidctx-context/credentials.yaml"), "--keyfile", "-k", help="Path to credentials YAML file"),
     path: Optional[Path] = typer.Option(None, "--path", "-p", help="Output directory (default: same as keyfile dir)"),
     connectors: Optional[str] = typer.Option(None, "--connectors", "-c", help="Comma-separated connector names to sync"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be synced without writing files"),
@@ -110,7 +110,7 @@ def sync(
 
 @app.command()
 def check(
-    keyfile: Path = typer.Option(..., "--keyfile", "-k", help="Path to credentials YAML file"),
+    keyfile: Path = typer.Option(Path("./droidctx-context/credentials.yaml"), "--keyfile", "-k", help="Path to credentials YAML file"),
 ):
     """Validate credentials and test connectivity."""
     from droidctx.config import load_credentials, validate_credentials
