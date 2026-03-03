@@ -109,7 +109,7 @@ fi
 
 echo ""
 info "Quick start:"
-echo "  1. droidctx init --path ./my-infra"
-echo "  2. Edit ./my-infra/credentials.yaml with your API keys"
-echo "  3. droidctx sync --keyfile ./my-infra/credentials.yaml"
+echo "  1. droidctx init"
+echo "  2. Edit ./droidctx-context/credentials.yaml with your API keys"
+echo "  3. droidctx sync"
 echo ""
