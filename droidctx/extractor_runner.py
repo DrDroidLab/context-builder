@@ -11,6 +11,34 @@ from droidctx.credential_mapper import get_source_enum, yaml_creds_to_extractor_
 
 logger = logging.getLogger(__name__)
 
+_datadog_patched = False
+
+
+def _patch_datadog_unstable_ops():
+    """Patch datadog-api-client to ignore unknown unstable operations.
+
+    Newer versions of datadog-api-client promoted query_timeseries_data to stable,
+    but the toolkit still tries to enable it as unstable, causing a KeyError.
+    """
+    global _datadog_patched
+    if _datadog_patched:
+        return
+    try:
+        from datadog_api_client.configuration import _UnstableOperations
+
+        _orig_setitem = _UnstableOperations.__setitem__
+
+        def _safe_setitem(self, key, value):
+            try:
+                _orig_setitem(self, key, value)
+            except KeyError:
+                pass  # Silently ignore unknown unstable operations
+
+        _UnstableOperations.__setitem__ = _safe_setitem
+        _datadog_patched = True
+    except ImportError:
+        pass
+
 
 def get_extract_methods(extractor) -> list[str]:
     """Get all extract_* methods on an extractor instance (excluding base class methods)."""
@@ -53,6 +81,9 @@ def run_extractor(
     # Convert YAML keys to extractor kwargs
     creds_kwargs = yaml_creds_to_extractor_kwargs(connector_type, yaml_config)
 
+    # Patch datadog-api-client unstable_operations to silently ignore unknown keys
+    _patch_datadog_unstable_ops()
+
     # Instantiate extractor (no api_host/api_token = standalone mode)
     request_id = str(uuid.uuid4())
     extractor = extractor_class(
@@ -60,6 +91,10 @@ def run_extractor(
         connector_name=connector_name,
         **creds_kwargs,
     )
+
+    # Set attributes that some extractors expect but don't define in __init__
+    if not hasattr(extractor, "account_id"):
+        extractor.account_id = None
 
     # Discover and run all extract_* methods
     methods = get_extract_methods(extractor)
