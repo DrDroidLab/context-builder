@@ -165,6 +165,94 @@ def check(
         console.print("[green]All credentials valid[/]")
 
 
+@app.command()
+def detect(
+    keyfile: Path = typer.Option(Path("./droidctx-context/credentials.yaml"), "--keyfile", "-k", help="Path to credentials YAML file"),
+):
+    """Auto-detect credentials from locally configured CLI tools (kubectl, aws, gcloud, az)."""
+    from droidctx.auto_detect import run_all_detectors, merge_into_credentials, save_credentials
+    from droidctx.config import load_credentials
+
+    keyfile = keyfile.resolve()
+
+    # Load existing credentials if file exists
+    existing = {}
+    if keyfile.exists():
+        try:
+            existing = load_credentials(keyfile)
+        except (ValueError, Exception):
+            existing = {}
+
+    # Run detectors
+    console.print("[bold]Scanning for CLI tools...[/]\n")
+
+    detected = run_all_detectors()
+
+    if not detected:
+        console.print("[yellow]No configured CLI tools detected.[/]")
+        console.print("[dim]Checked: kubectl, aws, gcloud, az[/]\n")
+        console.print("You can manually configure connectors in:")
+        console.print(f"  [bold]{keyfile}[/]\n")
+        return
+
+    # Show what was detected
+    table = Table(title="Detected Connectors")
+    table.add_column("Connector", style="bold")
+    table.add_column("Type")
+    table.add_column("Details")
+    table.add_column("Status")
+
+    needs_manual = []
+    for conn in detected:
+        name = conn["_connector_name"]
+        ctype = conn["type"]
+        manual_fields = conn.get("_needs_manual", [])
+
+        # Build details string
+        details_parts = []
+        for k, v in conn.items():
+            if k.startswith("_") or k == "type" or not v:
+                continue
+            details_parts.append(f"{k}={v}")
+        details = ", ".join(details_parts[:3])
+
+        if name in existing:
+            table.add_row(name, ctype, details, "[dim]already exists[/]")
+        elif manual_fields:
+            table.add_row(name, ctype, details, f"[yellow]needs: {', '.join(manual_fields)}[/]")
+            needs_manual.append((name, manual_fields))
+        else:
+            table.add_row(name, ctype, details, "[green]ready[/]")
+
+    console.print(table)
+    console.print()
+
+    # Merge and save
+    merged, added, skipped = merge_into_credentials(detected, existing)
+
+    if not added:
+        console.print("[dim]No new connectors to add (all already exist in credentials file).[/]\n")
+        return
+
+    save_credentials(merged, keyfile)
+
+    console.print(f"[bold green]Added {len(added)} connector(s) to {keyfile}[/]")
+    for name in added:
+        console.print(f"  + {name}")
+
+    if skipped:
+        console.print(f"\n[dim]Skipped {len(skipped)} (already exist): {', '.join(skipped)}[/]")
+
+    if needs_manual:
+        console.print("\n[yellow]Some connectors need manual completion:[/]")
+        for name, fields in needs_manual:
+            if name in added:
+                console.print(f"  {name}: fill in {', '.join(fields)}")
+
+    console.print(f"\nNext: [bold]droidctx sync -k {keyfile}[/]")
+    console.print()
+
+
 @app.command(name="list-connectors")
 def list_connectors(
     connector_type: Optional[str] = typer.Option(None, "--type", "-t", help="Show details for a specific connector type"),

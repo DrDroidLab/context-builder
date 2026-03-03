@@ -41,6 +41,7 @@ CONNECTOR_CREDENTIALS = {
     "KUBERNETES": {
         "required": ["cluster_name", "cluster_api_server", "cluster_token"],
         "optional": [],
+        "cli_mode_optional": ["cluster_api_server", "cluster_token"],
         "cli_tool": "kubectl",
         "description": "Kubernetes namespaces, services, deployments, ingresses, HPAs",
     },

@@ -51,7 +51,14 @@ def validate_credentials(credentials: dict[str, dict[str, Any]]) -> list[dict[st
             continue
 
         spec = CONNECTOR_CREDENTIALS[conn_type]
+
+        # _cli_mode connectors only require fields not in cli_mode_optional
+        cli_mode = config.get("_cli_mode", False)
+        cli_mode_optional = set(spec.get("cli_mode_optional", []))
+
         for field in spec["required"]:
+            if cli_mode and field in cli_mode_optional:
+                continue
             if field not in config or not config[field]:
                 errors.append({"connector": name, "message": f"Missing required field: {field}"})
 

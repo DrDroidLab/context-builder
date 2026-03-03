@@ -21,13 +21,16 @@ python3 -m venv ~/.droidctx && ~/.droidctx/bin/pip install git+https://github.co
 # 1. Initialize project (creates ./droidctx-context/)
 droidctx init
 
-# 2. Add your credentials
+# 2. Auto-detect credentials from local CLI tools (kubectl, aws, gcloud, az)
+droidctx detect
+
+# 3. Add any additional credentials manually
 vim ./droidctx-context/credentials.yaml
 
-# 3. Sync infrastructure metadata
+# 4. Sync infrastructure metadata
 droidctx sync
 
-# 4. Add the suggested prompt to your CLAUDE.md
+# 5. Add the suggested prompt to your CLAUDE.md
 ```
 
 ## Commands
@@ -40,6 +43,26 @@ Creates folder structure and a credentials template.
 droidctx init                      # Creates ./droidctx-context/
 droidctx init --path ./my-infra    # Custom path
 ```
+
+### `droidctx detect`
+
+Auto-detects credentials from locally configured CLI tools and populates `credentials.yaml`. Scans for `kubectl`, `aws`, `gcloud`, and `az`, extracts their active configurations, and merges discovered connectors into your credentials file without overwriting existing entries.
+
+```bash
+droidctx detect                                # Uses ./droidctx-context/credentials.yaml
+droidctx detect --keyfile ./my-infra/creds.yaml # Custom keyfile
+```
+
+**What gets detected:**
+
+| CLI Tool | Connectors Created | Values Extracted |
+|----------|-------------------|-----------------|
+| `kubectl` | KUBERNETES (cli mode) | Cluster name from current context |
+| `aws` | CLOUDWATCH, EKS | Region, EKS cluster names |
+| `gcloud` | GKE, GCM | Project ID, zone, GKE cluster names |
+| `az` | AZURE | Tenant ID, subscription ID (client ID/secret need manual entry) |
+
+Kubernetes connectors created by `detect` use **CLI mode** (`_cli_mode: true`), which means they extract resources directly via `kubectl` using your current kubeconfig context — no API server URL or token needed.
 
 ### `droidctx sync`
 
@@ -73,9 +96,21 @@ droidctx list-connectors --type GRAFANA
 
 ## Credentials Format
 
-Create a YAML file with your connector credentials. Run `droidctx init` to generate a template with all supported types.
+Create a YAML file with your connector credentials. Run `droidctx init` to generate a template with all supported types, or `droidctx detect` to auto-populate from your CLI tools.
 
 ```yaml
+# Auto-detected by `droidctx detect` (uses kubectl directly, no token needed)
+k8s_my-cluster:
+  type: "KUBERNETES"
+  _cli_mode: true
+  cluster_name: my-cluster
+
+# Auto-detected by `droidctx detect`
+cloudwatch_us-east-1:
+  type: "CLOUDWATCH"
+  region: us-east-1
+
+# Manual entry
 grafana_prod:
   type: "GRAFANA"
   grafana_host: https://your-grafana.com
@@ -86,17 +121,12 @@ datadog_prod:
   dd_api_key: your_api_key
   dd_app_key: your_app_key
 
+# Standard Kubernetes (API server + token, without CLI mode)
 k8s_production:
   type: "KUBERNETES"
   cluster_name: prod-cluster
   cluster_api_server: https://k8s-api.example.com
   cluster_token: eyJhbGciOiJSUzI1NiIs...
-
-cloudwatch_us:
-  type: "CLOUDWATCH"
-  region: us-east-1
-  aws_access_key: AKIAIOSFODNN7EXAMPLE
-  aws_secret_key: wJalrXUtnFEMI/K7MDENG...
 
 postgres_main:
   type: "POSTGRES"
@@ -106,6 +136,10 @@ postgres_main:
   user: readonly_user
   password: secret
 ```
+
+### CLI Mode for Kubernetes
+
+When `_cli_mode: true` is set on a KUBERNETES connector, droidctx uses `kubectl` directly with your current kubeconfig context instead of requiring an API server URL and token. This is the default when connectors are created via `droidctx detect`. Resources extracted: Namespaces, Services, Deployments, Ingresses, StatefulSets, ReplicaSets, HPAs, and NetworkPolicies.
 
 ## Supported Connectors (25)
 

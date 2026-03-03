@@ -132,7 +132,7 @@ def yaml_creds_to_extractor_kwargs(connector_type: str, yaml_config: dict) -> di
     mapping = CREDENTIAL_KEY_MAPPINGS.get(connector_type, {})
 
     for key, value in yaml_config.items():
-        if key == "type":
+        if key == "type" or key.startswith("_"):
             continue
 
         if key in mapping:

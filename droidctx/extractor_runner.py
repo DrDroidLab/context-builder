@@ -115,6 +115,15 @@ def run_extractor(
         Exception if extractor instantiation fails (credentials issue).
         Individual extract method failures are caught and logged.
     """
+    # Route _cli_mode KUBERNETES to native kubectl extractor
+    if connector_type == "KUBERNETES" and yaml_config.get("_cli_mode"):
+        from droidctx.k8s_cli_extractor import extract_k8s_via_cli
+        return extract_k8s_via_cli(
+            connector_name=connector_name,
+            progress_callback=progress_callback,
+            verbose=verbose,
+        )
+
     source = get_source_enum(connector_type)
     extractor_class = source_metadata_extractor_facade.get_connector_metadata_extractor_class(source)
 
