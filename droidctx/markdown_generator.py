@@ -9,7 +9,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Max lines per generated .md file before truncation
-MAX_LINES = 500
+MAX_LINES = 2000
 
 
 def sanitize_filename(name: str) -> str:
@@ -59,7 +59,7 @@ def _is_ephemeral_name(name: str) -> bool:
 
 
 class MarkdownGenerator:
-    """Generates .md files from extracted infrastructure assets."""
+    """Generates a single context.md per connector from extracted infrastructure assets."""
 
     def __init__(self, output_dir: Path):
         self.output_dir = output_dir
@@ -79,8 +79,8 @@ class MarkdownGenerator:
         logger.debug(f"Wrote {path}")
 
     def generate_all(self, connector_name: str, connector_type: str, assets: dict):
-        """Generate all .md files for a single connector's assets."""
-        self._generate_summary(connector_name, connector_type, assets)
+        """Generate a single context.md for a connector's assets."""
+        lines = self._generate_summary(connector_name, connector_type, assets)
 
         # Route to type-specific generators
         generators = {
@@ -112,10 +112,13 @@ class MarkdownGenerator:
         }
 
         gen = generators.get(connector_type, self._generate_generic)
-        gen(connector_name, connector_type, assets)
+        lines.extend(gen(connector_name, connector_type, assets))
 
-    def _generate_summary(self, connector_name: str, connector_type: str, assets: dict):
-        """Generate connectors/<name>/_summary.md with resource counts."""
+        cdir = self._connector_dir(connector_name)
+        self._write(cdir / "context.md", "\n".join(lines))
+
+    def _generate_summary(self, connector_name: str, connector_type: str, assets: dict) -> list[str]:
+        """Return summary lines with resource counts."""
         lines = [
             f"# {connector_name} ({connector_type})",
             "",
@@ -132,96 +135,92 @@ class MarkdownGenerator:
 
         total = sum(len(v) for v in assets.values() if isinstance(v, dict))
         lines.extend(["", f"**Total resources:** {total}", ""])
-
-        self._write(self._connector_dir(connector_name) / "_summary.md", "\n".join(lines))
+        return lines
 
     # ---- Grafana ----
 
-    def _generate_grafana(self, name: str, ctype: str, assets: dict):
+    def _generate_grafana(self, name: str, ctype: str, assets: dict) -> list[str]:
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
 
-        cdir = self._connector_dir(name)
+        out: list[str] = []
 
         # Datasources
         ds = assets.get(SMT.GRAFANA_DATASOURCE, {})
         if ds:
-            lines = [f"# Grafana Datasources ({name})", "", _table_row(["Name", "Type", "UID"]), _table_row(["---", "---", "---"])]
+            out.extend([f"## Datasources", "", _table_row(["Name", "Type", "UID"]), _table_row(["---", "---", "---"])])
             for uid, info in ds.items():
                 n = info.get("name", uid)
                 t = info.get("type", "unknown")
-                lines.append(_table_row([n, t, uid]))
-            self._write(cdir / "datasources.md", "\n".join(lines))
+                out.append(_table_row([n, t, uid]))
+            out.append("")
 
         # Dashboards
         dashboards = assets.get(SMT.GRAFANA_DASHBOARD, {})
         if dashboards:
-            dash_dir = cdir / "dashboards"
-            dash_dir.mkdir(parents=True, exist_ok=True)
-
-            index_lines = [f"# Grafana Dashboards ({name})", "", f"**Total:** {len(dashboards)}", "",
-                           _table_row(["Dashboard", "UID", "Panels"]), _table_row(["---", "---", "---"])]
-
+            out.extend([f"## Dashboards ({len(dashboards)})", "",
+                        _table_row(["Dashboard", "UID", "Panels"]), _table_row(["---", "---", "---"])])
             for uid, info in dashboards.items():
                 title = info.get("title", uid)
                 panels = info.get("panels", [])
                 panel_count = len(panels) if isinstance(panels, list) else 0
-                index_lines.append(_table_row([title, uid, str(panel_count)]))
+                out.append(_table_row([title, uid, str(panel_count)]))
+            out.append("")
 
-                # Individual dashboard file
-                dlines = [f"# {title}", f"**Source:** {name}", f"**UID:** {uid}", ""]
-                if isinstance(panels, list) and panels:
-                    dlines.extend([
-                        "## Panels", "",
-                        _table_row(["Panel", "Type", "Query/Metric"]),
-                        _table_row(["---", "---", "---"]),
-                    ])
-                    for p in panels:
-                        if isinstance(p, dict):
-                            pname = p.get("title", "Untitled")
-                            ptype = p.get("type", "")
-                            expr = ""
-                            targets = p.get("targets", [])
-                            if isinstance(targets, list):
-                                for t in targets[:1]:
-                                    if isinstance(t, dict):
-                                        expr = t.get("expr", t.get("query", ""))
-                            dlines.append(_table_row([pname, ptype, str(expr)[:200]]))
-
-                self._write(dash_dir / f"{sanitize_filename(title)}.md", "\n".join(dlines))
-
-            self._write(cdir / "dashboards.md", "\n".join(index_lines))
+            # Panel details per dashboard
+            for uid, info in dashboards.items():
+                title = info.get("title", uid)
+                panels = info.get("panels", [])
+                if not isinstance(panels, list) or not panels:
+                    continue
+                out.extend([f"### {title}", "",
+                            _table_row(["Panel", "Type", "Query/Metric"]),
+                            _table_row(["---", "---", "---"])])
+                for p in panels:
+                    if isinstance(p, dict):
+                        pname = p.get("title", "Untitled")
+                        ptype = p.get("type", "")
+                        expr = ""
+                        targets = p.get("targets", [])
+                        if isinstance(targets, list):
+                            for t in targets[:1]:
+                                if isinstance(t, dict):
+                                    expr = t.get("expr", t.get("query", ""))
+                        out.append(_table_row([pname, ptype, str(expr)[:200]]))
+                out.append("")
 
         # Alerts
         alerts = assets.get(SMT.GRAFANA_ALERT_RULE, {})
         if alerts:
-            lines = [f"# Grafana Alert Rules ({name})", "", f"**Total:** {len(alerts)}", "",
-                     _table_row(["Alert", "State", "Labels"]), _table_row(["---", "---", "---"])]
+            out.extend([f"## Alert Rules ({len(alerts)})", "",
+                        _table_row(["Alert", "State", "Labels"]), _table_row(["---", "---", "---"])])
             for uid, info in alerts.items():
                 aname = info.get("title", info.get("name", uid))
                 state = info.get("state", "")
                 labels = info.get("labels", {})
                 label_str = ", ".join(f"{k}={v}" for k, v in labels.items()) if isinstance(labels, dict) else ""
-                lines.append(_table_row([aname, state, label_str]))
-            self._write(cdir / "alerts.md", "\n".join(lines))
+                out.append(_table_row([aname, state, label_str]))
+            out.append("")
+
+        return out
 
     # ---- Datadog ----
 
-    def _generate_datadog(self, name: str, ctype: str, assets: dict):
+    def _generate_datadog(self, name: str, ctype: str, assets: dict) -> list[str]:
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
 
-        cdir = self._connector_dir(name)
+        out: list[str] = []
 
         # Monitors
         monitors = assets.get(SMT.DATADOG_MONITOR, {})
         if monitors:
-            lines = [f"# Datadog Monitors ({name})", "", f"**Total:** {len(monitors)}", "",
-                     _table_row(["Monitor", "Type", "Tags"]), _table_row(["---", "---", "---"])]
+            out.extend([f"## Monitors ({len(monitors)})", "",
+                        _table_row(["Monitor", "Type", "Tags"]), _table_row(["---", "---", "---"])])
             for uid, info in monitors.items():
                 mname = info.get("name", uid)
                 mtype = info.get("type", "")
                 tags = ", ".join(info.get("tags", [])) if isinstance(info.get("tags"), list) else ""
-                lines.append(_table_row([mname, mtype, tags]))
-            self._write(cdir / "monitors.md", "\n".join(lines))
+                out.append(_table_row([mname, mtype, tags]))
+            out.append("")
 
         # Services (filter out ephemeral pod/job names)
         services = assets.get(SMT.DATADOG_SERVICE, {})
@@ -229,37 +228,38 @@ class MarkdownGenerator:
             filtered = {uid: info for uid, info in services.items()
                         if not _is_ephemeral_name(str(info.get("name", uid) if isinstance(info, dict) else uid))}
             if filtered:
-                lines = [f"# Datadog Services ({name})", "", f"**Total:** {len(filtered)}", "",
-                         _table_row(["Service", "Details"]), _table_row(["---", "---"])]
+                out.extend([f"## Services ({len(filtered)})", "",
+                            _table_row(["Service", "Details"]), _table_row(["---", "---"])])
                 for uid, info in filtered.items():
                     sname = info.get("name", uid) if isinstance(info, dict) else uid
                     details = ""
                     if isinstance(info, dict):
                         details = str({k: v for k, v in info.items() if k != "name"})[:200]
-                    lines.append(_table_row([sname, details]))
-                self._write(cdir / "services.md", "\n".join(lines))
+                    out.append(_table_row([sname, details]))
+                out.append("")
 
         # Dashboards
         dashboards = assets.get(SMT.DATADOG_DASHBOARD, {})
         if dashboards:
-            lines = [f"# Datadog Dashboards ({name})", "", f"**Total:** {len(dashboards)}", "",
-                     _table_row(["Dashboard", "ID"]), _table_row(["---", "---"])]
+            out.extend([f"## Dashboards ({len(dashboards)})", "",
+                        _table_row(["Dashboard", "ID"]), _table_row(["---", "---"])])
             for uid, info in dashboards.items():
                 dname = info.get("title", info.get("name", uid)) if isinstance(info, dict) else uid
-                lines.append(_table_row([dname, uid]))
-            self._write(cdir / "dashboards.md", "\n".join(lines))
+                out.append(_table_row([dname, uid]))
+            out.append("")
+
+        return out
 
     # ---- CloudWatch ----
 
-    def _generate_cloudwatch(self, name: str, ctype: str, assets: dict):
+    def _generate_cloudwatch(self, name: str, ctype: str, assets: dict) -> list[str]:
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
 
-        cdir = self._connector_dir(name)
+        out: list[str] = []
 
         # Metrics (namespace -> region -> metric_name -> {Dimensions, DimensionNames})
         metrics = assets.get(SMT.CLOUDWATCH_METRIC, {})
         if metrics:
-            lines = [f"# CloudWatch Metrics ({name})", ""]
             total_metrics = 0
             for namespace, regions in metrics.items():
                 if not isinstance(regions, dict):
@@ -268,27 +268,23 @@ class MarkdownGenerator:
                     if not isinstance(metric_map, dict):
                         continue
                     total_metrics += len(metric_map)
-            lines.append(f"**Total namespaces:** {len(metrics)}  |  **Total metrics:** {total_metrics}")
-            lines.append("")
+            out.extend([f"## Metrics", "",
+                        f"**Total namespaces:** {len(metrics)}  |  **Total metrics:** {total_metrics}", ""])
             for namespace in sorted(metrics.keys()):
                 regions = metrics[namespace]
                 if not isinstance(regions, dict):
                     continue
-                lines.append(f"## {namespace}")
-                lines.append("")
+                out.extend([f"### {namespace}", "",
+                            _table_row(["Metric", "Dimensions"]),
+                            _table_row(["---", "---"])])
                 for region, metric_map in regions.items():
                     if not isinstance(metric_map, dict):
                         continue
-                    lines.extend([
-                        _table_row(["Metric", "Dimensions"]),
-                        _table_row(["---", "---"]),
-                    ])
                     for metric_name in sorted(metric_map.keys()):
                         minfo = metric_map[metric_name]
                         dim_names = minfo.get("DimensionNames", []) if isinstance(minfo, dict) else []
-                        lines.append(_table_row([metric_name, ", ".join(dim_names)]))
-                lines.append("")
-            self._write(cdir / "metrics.md", "\n".join(lines))
+                        out.append(_table_row([metric_name, ", ".join(dim_names)]))
+                out.append("")
 
         # Log Groups (region -> {log_groups: [names]})
         log_groups = assets.get(SMT.CLOUDWATCH_LOG_GROUP, {})
@@ -299,37 +295,35 @@ class MarkdownGenerator:
                     all_names.extend(info["log_groups"])
                 else:
                     all_names.append(info.get("name", uid) if isinstance(info, dict) else uid)
-            lines = [f"# CloudWatch Log Groups ({name})", "", f"**Total:** {len(all_names)}", "",
-                     _table_row(["Log Group"]), _table_row(["---"])]
+            out.extend([f"## Log Groups ({len(all_names)})", "",
+                        _table_row(["Log Group"]), _table_row(["---"])])
             for lg in sorted(all_names):
-                lines.append(_table_row([lg]))
-            self._write(cdir / "log_groups.md", "\n".join(lines))
+                out.append(_table_row([lg]))
+            out.append("")
 
         # Log Group Queries (log_group -> {queries: [query_strings]})
         log_queries = assets.get(SMT.CLOUDWATCH_LOG_GROUP_QUERY, {})
         if log_queries:
-            lines = [f"# CloudWatch Log Insights Queries ({name})", "", f"**Total log groups with queries:** {len(log_queries)}", "",
-                     _table_row(["Log Group", "Queries"]), _table_row(["---", "---"])]
+            out.extend([f"## Log Insights Queries ({len(log_queries)} log groups)", "",
+                        _table_row(["Log Group", "Queries"]), _table_row(["---", "---"])])
             for log_group, info in sorted(log_queries.items()):
                 queries = info.get("queries", []) if isinstance(info, dict) else []
-                lines.append(_table_row([log_group, str(len(queries))]))
-            lines.append("")
-            # Detail section
+                out.append(_table_row([log_group, str(len(queries))]))
+            out.append("")
             for log_group, info in sorted(log_queries.items()):
                 queries = info.get("queries", []) if isinstance(info, dict) else []
                 if queries:
-                    lines.extend([f"## {log_group}", ""])
+                    out.extend([f"### {log_group}", ""])
                     for q in queries:
-                        lines.append(f"- `{q}`")
-                    lines.append("")
-            self._write(cdir / "log_queries.md", "\n".join(lines))
+                        out.append(f"- `{q}`")
+                    out.append("")
 
         # Alarms (alarm_name -> raw AWS alarm dict)
         alarms = assets.get(SMT.CLOUDWATCH_ALARMS, {})
         if alarms:
-            lines = [f"# CloudWatch Alarms ({name})", "", f"**Total:** {len(alarms)}", "",
-                     _table_row(["Alarm", "Namespace", "Metric", "Statistic", "Threshold"]),
-                     _table_row(["---", "---", "---", "---", "---"])]
+            out.extend([f"## Alarms ({len(alarms)})", "",
+                        _table_row(["Alarm", "Namespace", "Metric", "Statistic", "Threshold"]),
+                        _table_row(["---", "---", "---", "---", "---"])])
             for uid, info in alarms.items():
                 if isinstance(info, dict):
                     aname = info.get("AlarmName", uid)
@@ -339,14 +333,14 @@ class MarkdownGenerator:
                     threshold = info.get("Threshold", "")
                 else:
                     aname, namespace, metric, stat, threshold = uid, "", "", "", ""
-                lines.append(_table_row([aname, str(namespace), str(metric), str(stat), str(threshold)]))
-            self._write(cdir / "alarms.md", "\n".join(lines))
+                out.append(_table_row([aname, str(namespace), str(metric), str(stat), str(threshold)]))
+            out.append("")
 
         # Dashboards (dashboard_name -> {dashboard_name, dashboard_arn, widgets, region})
         dashboards = assets.get(SMT.CLOUDWATCH_DASHBOARD, {})
         if dashboards:
-            lines = [f"# CloudWatch Dashboards ({name})", "", f"**Total:** {len(dashboards)}", "",
-                     _table_row(["Dashboard", "Widgets", "Region"]), _table_row(["---", "---", "---"])]
+            out.extend([f"## Dashboards ({len(dashboards)})", "",
+                        _table_row(["Dashboard", "Widgets", "Region"]), _table_row(["---", "---", "---"])])
             for uid, info in dashboards.items():
                 if isinstance(info, dict):
                     dname = info.get("dashboard_name", uid)
@@ -355,8 +349,8 @@ class MarkdownGenerator:
                     region = info.get("region", "")
                 else:
                     dname, widget_count, region = uid, 0, ""
-                lines.append(_table_row([dname, str(widget_count), str(region)]))
-            lines.append("")
+                out.append(_table_row([dname, str(widget_count), str(region)]))
+            out.append("")
             # Dashboard widget details
             for uid, info in dashboards.items():
                 if not isinstance(info, dict):
@@ -365,27 +359,26 @@ class MarkdownGenerator:
                 widgets = info.get("widgets", [])
                 if not widgets:
                     continue
-                lines.extend([f"## {dname}", "",
-                              _table_row(["Widget", "Namespace", "Metric", "Statistic", "Period"]),
-                              _table_row(["---", "---", "---", "---", "---"])])
+                out.extend([f"### {dname}", "",
+                            _table_row(["Widget", "Namespace", "Metric", "Statistic", "Period"]),
+                            _table_row(["---", "---", "---", "---", "---"])])
                 for w in widgets:
                     if isinstance(w, dict):
-                        lines.append(_table_row([
+                        out.append(_table_row([
                             w.get("widget_title", ""),
                             w.get("namespace", ""),
                             w.get("metric_name", ""),
                             w.get("statistic", ""),
                             str(w.get("period", "")),
                         ]))
-                lines.append("")
-            self._write(cdir / "dashboards.md", "\n".join(lines))
+                out.append("")
 
         # ECS Clusters (cluster_name -> {cluster_name, services, containers, region})
         ecs_clusters = assets.get(SMT.ECS_CLUSTER, {})
         if ecs_clusters:
-            lines = [f"# ECS Clusters ({name})", "", f"**Total:** {len(ecs_clusters)}", "",
-                     _table_row(["Cluster", "Services", "Containers", "Region"]),
-                     _table_row(["---", "---", "---", "---"])]
+            out.extend([f"## ECS Clusters ({len(ecs_clusters)})", "",
+                        _table_row(["Cluster", "Services", "Containers", "Region"]),
+                        _table_row(["---", "---", "---", "---"])])
             for uid, info in ecs_clusters.items():
                 if isinstance(info, dict):
                     cname = info.get("cluster_name", uid)
@@ -394,9 +387,8 @@ class MarkdownGenerator:
                     region = info.get("region", "")
                 else:
                     cname, services, containers, region = uid, [], [], ""
-                lines.append(_table_row([cname, str(len(services)), str(len(containers)), str(region)]))
-            lines.append("")
-            # Detail per cluster
+                out.append(_table_row([cname, str(len(services)), str(len(containers)), str(region)]))
+            out.append("")
             for uid, info in ecs_clusters.items():
                 if not isinstance(info, dict):
                     continue
@@ -404,22 +396,21 @@ class MarkdownGenerator:
                 services = info.get("services", [])
                 containers = info.get("containers", [])
                 if services or containers:
-                    lines.append(f"## {cname}")
-                    lines.append("")
+                    out.append(f"### {cname}")
+                    out.append("")
                     if services:
-                        lines.append(f"**Services:** {', '.join(services)}")
-                        lines.append("")
+                        out.append(f"**Services:** {', '.join(services)}")
+                        out.append("")
                     if containers:
-                        lines.append(f"**Containers:** {', '.join(containers)}")
-                        lines.append("")
-            self._write(cdir / "ecs_clusters.md", "\n".join(lines))
+                        out.append(f"**Containers:** {', '.join(containers)}")
+                        out.append("")
 
         # ECS Tasks (task_arn -> {taskArn, clusterName, status, container_name, ...})
         ecs_tasks = assets.get(SMT.ECS_TASK, {})
         if ecs_tasks:
-            lines = [f"# ECS Tasks ({name})", "", f"**Total:** {len(ecs_tasks)}", "",
-                     _table_row(["Task", "Cluster", "Container", "Status"]),
-                     _table_row(["---", "---", "---", "---"])]
+            out.extend([f"## ECS Tasks ({len(ecs_tasks)})", "",
+                        _table_row(["Task", "Cluster", "Container", "Status"]),
+                        _table_row(["---", "---", "---", "---"])])
             for uid, info in ecs_tasks.items():
                 if isinstance(info, dict):
                     task_arn = info.get("taskArn", uid)
@@ -429,15 +420,15 @@ class MarkdownGenerator:
                     status = info.get("status", "")
                 else:
                     task_id, cluster, container, status = uid, "", "", ""
-                lines.append(_table_row([task_id, str(cluster), str(container), str(status)]))
-            self._write(cdir / "ecs_tasks.md", "\n".join(lines))
+                out.append(_table_row([task_id, str(cluster), str(container), str(status)]))
+            out.append("")
 
         # RDS Instances (db_id -> raw AWS describe response + db_names)
         rds_instances = assets.get(SMT.RDS_INSTANCES, {})
         if rds_instances:
-            lines = [f"# RDS Instances ({name})", "", f"**Total:** {len(rds_instances)}", "",
-                     _table_row(["Instance", "Engine", "Class", "Status", "Databases"]),
-                     _table_row(["---", "---", "---", "---", "---"])]
+            out.extend([f"## RDS Instances ({len(rds_instances)})", "",
+                        _table_row(["Instance", "Engine", "Class", "Status", "Databases"]),
+                        _table_row(["---", "---", "---", "---", "---"])])
             for uid, info in rds_instances.items():
                 if isinstance(info, dict):
                     db_id = info.get("DBInstanceIdentifier", uid)
@@ -450,18 +441,20 @@ class MarkdownGenerator:
                 else:
                     db_id, engine, engine_ver, db_class, status, db_str = uid, "", "", "", "", ""
                 engine_full = f"{engine} {engine_ver}".strip() if engine else ""
-                lines.append(_table_row([db_id, engine_full, str(db_class), str(status), db_str[:100]]))
-            self._write(cdir / "rds_instances.md", "\n".join(lines))
+                out.append(_table_row([db_id, engine_full, str(db_class), str(status), db_str[:100]]))
+            out.append("")
+
+        return out
 
     # ---- Kubernetes / EKS / GKE ----
 
-    def _generate_kubernetes(self, name: str, ctype: str, assets: dict):
-        self._generate_k8s_resources(name, ctype, assets, "KUBERNETES")
+    def _generate_kubernetes(self, name: str, ctype: str, assets: dict) -> list[str]:
+        return self._generate_k8s_resources(name, ctype, assets, "KUBERNETES")
 
-    def _generate_kubernetes_like(self, name: str, ctype: str, assets: dict):
-        self._generate_k8s_resources(name, ctype, assets, ctype)
+    def _generate_kubernetes_like(self, name: str, ctype: str, assets: dict) -> list[str]:
+        return self._generate_k8s_resources(name, ctype, assets, ctype)
 
-    def _generate_k8s_resources(self, name: str, ctype: str, assets: dict, prefix: str):
+    def _generate_k8s_resources(self, name: str, ctype: str, assets: dict, prefix: str) -> list[str]:
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
 
         # Map prefix to model types
@@ -488,157 +481,155 @@ class MarkdownGenerator:
         }
 
         types = type_map.get(prefix, {})
-        cdir = self._connector_dir(name)
+        out: list[str] = []
 
-        # Write per-resource-type files
         for resource_name, model_type in types.items():
             items = assets.get(model_type, {})
             if not items:
                 continue
 
-            lines = [f"# {resource_name.replace('_', ' ').title()}s ({name})", "", f"**Total:** {len(items)}", ""]
+            out.extend([f"## {resource_name.replace('_', ' ').title()}s ({len(items)})", ""])
 
             if resource_name == "deployment":
-                lines.extend([_table_row(["Name", "Replicas", "Image"]), _table_row(["---", "---", "---"])])
+                out.extend([_table_row(["Name", "Replicas", "Image"]), _table_row(["---", "---", "---"])])
                 for uid, info in items.items():
                     dname = info.get("name", uid) if isinstance(info, dict) else uid
                     replicas = info.get("replicas", "") if isinstance(info, dict) else ""
                     image = info.get("image", "") if isinstance(info, dict) else ""
-                    lines.append(_table_row([dname, str(replicas), str(image)[:100]]))
+                    out.append(_table_row([dname, str(replicas), str(image)[:100]]))
             elif resource_name == "service":
-                lines.extend([_table_row(["Name", "Type", "Ports"]), _table_row(["---", "---", "---"])])
+                out.extend([_table_row(["Name", "Type", "Ports"]), _table_row(["---", "---", "---"])])
                 for uid, info in items.items():
                     sname = info.get("name", uid) if isinstance(info, dict) else uid
                     stype = info.get("type", "") if isinstance(info, dict) else ""
                     ports = info.get("ports", "") if isinstance(info, dict) else ""
-                    lines.append(_table_row([sname, str(stype), str(ports)[:100]]))
+                    out.append(_table_row([sname, str(stype), str(ports)[:100]]))
             elif resource_name == "namespace":
                 for uid, info in items.items():
                     ns = info.get("name", uid) if isinstance(info, dict) else uid
-                    lines.append(f"- {ns}")
+                    out.append(f"- {ns}")
             else:
-                lines.extend([_table_row(["Name", "Details"]), _table_row(["---", "---"])])
+                out.extend([_table_row(["Name", "Details"]), _table_row(["---", "---"])])
                 for uid, info in items.items():
                     iname = info.get("name", uid) if isinstance(info, dict) else uid
-                    lines.append(_table_row([iname, ""]))
+                    out.append(_table_row([iname, ""]))
 
-            lines.append("")
-            self._write(cdir / f"{resource_name}s.md", "\n".join(lines))
+            out.append("")
+
+        return out
 
     # ---- GKE (K8s + GCP resources) ----
 
-    def _generate_gke(self, name: str, ctype: str, assets: dict):
+    def _generate_gke(self, name: str, ctype: str, assets: dict) -> list[str]:
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
 
         # First generate the K8s-style resources (namespaces, deployments, etc.)
-        self._generate_k8s_resources(name, ctype, assets, "GKE")
-
-        cdir = self._connector_dir(name)
+        out = self._generate_k8s_resources(name, ctype, assets, "GKE")
 
         # GKE Clusters
         clusters = assets.get(SMT.GKE_CLUSTER, {})
         if clusters:
-            lines = [f"# GKE Clusters ({name})", "", f"**Total:** {len(clusters)}", "",
-                     _table_row(["Cluster", "Location", "Status"]),
-                     _table_row(["---", "---", "---"])]
+            out.extend([f"## GKE Clusters ({len(clusters)})", "",
+                        _table_row(["Cluster", "Location", "Status"]),
+                        _table_row(["---", "---", "---"])])
             for uid, info in clusters.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("location", "")),
                         str(info.get("status", "")),
                     ]))
-            self._write(cdir / "clusters.md", "\n".join(lines))
+            out.append("")
 
         # Compute Instances
         vms = assets.get(SMT.GCP_COMPUTE_INSTANCE, {})
         if vms:
-            lines = [f"# Compute Engine Instances ({name})", "", f"**Total:** {len(vms)}", "",
-                     _table_row(["Instance", "Zone", "Machine Type", "Status"]),
-                     _table_row(["---", "---", "---", "---"])]
+            out.extend([f"## Compute Instances ({len(vms)})", "",
+                        _table_row(["Instance", "Zone", "Machine Type", "Status"]),
+                        _table_row(["---", "---", "---", "---"])])
             for uid, info in vms.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("zone", "")),
                         str(info.get("machine_type", ""))[:60],
                         str(info.get("status", "")),
                     ]))
-            self._write(cdir / "compute_instances.md", "\n".join(lines))
+            out.append("")
 
         # Instance Groups
         igs = assets.get(SMT.GCP_INSTANCE_GROUP, {})
         if igs:
-            lines = [f"# Instance Groups ({name})", "", f"**Total:** {len(igs)}", "",
-                     _table_row(["Group", "Zone", "Size"]),
-                     _table_row(["---", "---", "---"])]
+            out.extend([f"## Instance Groups ({len(igs)})", "",
+                        _table_row(["Group", "Zone", "Size"]),
+                        _table_row(["---", "---", "---"])])
             for uid, info in igs.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("zone", "")),
                         str(info.get("size", "")),
                     ]))
-            self._write(cdir / "instance_groups.md", "\n".join(lines))
+            out.append("")
 
         # Storage Buckets
         buckets = assets.get(SMT.GCP_STORAGE_BUCKET, {})
         if buckets:
-            lines = [f"# Cloud Storage Buckets ({name})", "", f"**Total:** {len(buckets)}", "",
-                     _table_row(["Bucket", "Location", "Storage Class"]),
-                     _table_row(["---", "---", "---"])]
+            out.extend([f"## Cloud Storage Buckets ({len(buckets)})", "",
+                        _table_row(["Bucket", "Location", "Storage Class"]),
+                        _table_row(["---", "---", "---"])])
             for uid, info in buckets.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("location", "")),
                         str(info.get("storage_class", "")),
                     ]))
-            self._write(cdir / "storage_buckets.md", "\n".join(lines))
+            out.append("")
 
         # Cloud SQL Instances
         sql_instances = assets.get(SMT.GCP_CLOUD_SQL_INSTANCE, {})
         if sql_instances:
-            lines = [f"# Cloud SQL Instances ({name})", "", f"**Total:** {len(sql_instances)}", "",
-                     _table_row(["Instance", "Database Version", "Tier", "State", "Region"]),
-                     _table_row(["---", "---", "---", "---", "---"])]
+            out.extend([f"## Cloud SQL Instances ({len(sql_instances)})", "",
+                        _table_row(["Instance", "Database Version", "Tier", "State", "Region"]),
+                        _table_row(["---", "---", "---", "---", "---"])])
             for uid, info in sql_instances.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("database_version", "")),
                         str(info.get("tier", info.get("settings", {}).get("tier", ""))),
                         str(info.get("state", "")),
                         str(info.get("region", "")),
                     ]))
-            self._write(cdir / "cloud_sql_instances.md", "\n".join(lines))
+            out.append("")
 
         # Cloud SQL Databases
         sql_dbs = assets.get(SMT.GCP_CLOUD_SQL_DATABASE, {})
         if sql_dbs:
-            lines = [f"# Cloud SQL Databases ({name})", "", f"**Total:** {len(sql_dbs)}", "",
-                     _table_row(["Database", "Instance", "Charset", "Collation"]),
-                     _table_row(["---", "---", "---", "---"])]
+            out.extend([f"## Cloud SQL Databases ({len(sql_dbs)})", "",
+                        _table_row(["Database", "Instance", "Charset", "Collation"]),
+                        _table_row(["---", "---", "---", "---"])])
             for uid, info in sql_dbs.items():
                 if isinstance(info, dict):
                     ctx = info.get("gcp_context", {})
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(ctx.get("instance", "")),
                         str(info.get("charset", "")),
                         str(info.get("collation", "")),
                     ]))
-            self._write(cdir / "cloud_sql_databases.md", "\n".join(lines))
+            out.append("")
 
         # Memorystore Redis
         redis = assets.get(SMT.GCP_MEMORYSTORE_REDIS, {})
         if redis:
-            lines = [f"# Memorystore Redis ({name})", "", f"**Total:** {len(redis)}", "",
-                     _table_row(["Instance", "Location", "Version", "Tier", "Memory GB", "State"]),
-                     _table_row(["---", "---", "---", "---", "---", "---"])]
+            out.extend([f"## Memorystore Redis ({len(redis)})", "",
+                        _table_row(["Instance", "Location", "Version", "Tier", "Memory GB", "State"]),
+                        _table_row(["---", "---", "---", "---", "---", "---"])])
             for uid, info in redis.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("location", "")),
                         str(info.get("redis_version", "")),
@@ -646,250 +637,250 @@ class MarkdownGenerator:
                         str(info.get("memory_size_gb", "")),
                         str(info.get("state", "")),
                     ]))
-            self._write(cdir / "redis_instances.md", "\n".join(lines))
+            out.append("")
 
         # Alert Policies
         alerts = assets.get(SMT.GCP_ALERT_POLICY, {})
         if alerts:
-            lines = [f"# Alert Policies ({name})", "", f"**Total:** {len(alerts)}", "",
-                     _table_row(["Policy", "Display Name", "Enabled"]),
-                     _table_row(["---", "---", "---"])]
+            out.extend([f"## Alert Policies ({len(alerts)})", "",
+                        _table_row(["Policy", "Display Name", "Enabled"]),
+                        _table_row(["---", "---", "---"])])
             for uid, info in alerts.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         str(uid).split("/")[-1],
                         str(info.get("display_name", info.get("displayName", ""))),
                         str(info.get("enabled", "")),
                     ]))
-            self._write(cdir / "alert_policies.md", "\n".join(lines))
+            out.append("")
 
         # Notification Channels
         channels = assets.get(SMT.GCP_NOTIFICATION_CHANNEL, {})
         if channels:
-            lines = [f"# Notification Channels ({name})", "", f"**Total:** {len(channels)}", "",
-                     _table_row(["Channel", "Type", "Enabled"]),
-                     _table_row(["---", "---", "---"])]
+            out.extend([f"## Notification Channels ({len(channels)})", "",
+                        _table_row(["Channel", "Type", "Enabled"]),
+                        _table_row(["---", "---", "---"])])
             for uid, info in channels.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("display_name", info.get("displayName", uid)),
                         str(info.get("type", "")),
                         str(info.get("enabled", "")),
                     ]))
-            self._write(cdir / "notification_channels.md", "\n".join(lines))
+            out.append("")
 
         # Cloud Functions
         functions = assets.get(SMT.GCP_CLOUD_FUNCTION, {})
         if functions:
-            lines = [f"# Cloud Functions ({name})", "", f"**Total:** {len(functions)}", "",
-                     _table_row(["Function", "Location", "Runtime", "State"]),
-                     _table_row(["---", "---", "---", "---"])]
+            out.extend([f"## Cloud Functions ({len(functions)})", "",
+                        _table_row(["Function", "Location", "Runtime", "State"]),
+                        _table_row(["---", "---", "---", "---"])])
             for uid, info in functions.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("location", "")),
                         str(info.get("runtime", "")),
                         str(info.get("state", info.get("status", ""))),
                     ]))
-            self._write(cdir / "cloud_functions.md", "\n".join(lines))
+            out.append("")
 
         # Cloud Run Services
         run_services = assets.get(SMT.GCP_CLOUD_RUN_SERVICE, {})
         if run_services:
-            lines = [f"# Cloud Run Services ({name})", "", f"**Total:** {len(run_services)}", "",
-                     _table_row(["Service", "Location", "URL"]),
-                     _table_row(["---", "---", "---"])]
+            out.extend([f"## Cloud Run Services ({len(run_services)})", "",
+                        _table_row(["Service", "Location", "URL"]),
+                        _table_row(["---", "---", "---"])])
             for uid, info in run_services.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("location", "")),
                         str(info.get("uri", info.get("url", "")))[:100],
                     ]))
-            self._write(cdir / "cloud_run_services.md", "\n".join(lines))
+            out.append("")
 
         # Pub/Sub Topics
         topics = assets.get(SMT.GCP_PUBSUB_TOPIC, {})
         if topics:
-            lines = [f"# Pub/Sub Topics ({name})", "", f"**Total:** {len(topics)}", ""]
+            out.extend([f"## Pub/Sub Topics ({len(topics)})", ""])
             for uid, info in topics.items():
                 topic_name = str(uid).split("/")[-1] if "/" in str(uid) else uid
-                lines.append(f"- {topic_name}")
-            self._write(cdir / "pubsub_topics.md", "\n".join(lines))
+                out.append(f"- {topic_name}")
+            out.append("")
 
         # Pub/Sub Subscriptions
         subs = assets.get(SMT.GCP_PUBSUB_SUBSCRIPTION, {})
         if subs:
-            lines = [f"# Pub/Sub Subscriptions ({name})", "", f"**Total:** {len(subs)}", "",
-                     _table_row(["Subscription", "Topic"]),
-                     _table_row(["---", "---"])]
+            out.extend([f"## Pub/Sub Subscriptions ({len(subs)})", "",
+                        _table_row(["Subscription", "Topic"]),
+                        _table_row(["---", "---"])])
             for uid, info in subs.items():
                 if isinstance(info, dict):
                     sub_name = str(uid).split("/")[-1] if "/" in str(uid) else uid
                     topic = str(info.get("topic", "")).split("/")[-1]
-                    lines.append(_table_row([sub_name, topic]))
-            self._write(cdir / "pubsub_subscriptions.md", "\n".join(lines))
+                    out.append(_table_row([sub_name, topic]))
+            out.append("")
 
         # BigQuery Datasets
         bq_datasets = assets.get(SMT.GCP_BIGQUERY_DATASET, {})
         if bq_datasets:
-            lines = [f"# BigQuery Datasets ({name})", "", f"**Total:** {len(bq_datasets)}", "",
-                     _table_row(["Dataset", "Location"]),
-                     _table_row(["---", "---"])]
+            out.extend([f"## BigQuery Datasets ({len(bq_datasets)})", "",
+                        _table_row(["Dataset", "Location"]),
+                        _table_row(["---", "---"])])
             for uid, info in bq_datasets.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("dataset_id", uid),
                         str(info.get("location", "")),
                     ]))
-            self._write(cdir / "bigquery_datasets.md", "\n".join(lines))
+            out.append("")
 
         # BigQuery Tables
         bq_tables = assets.get(SMT.GCP_BIGQUERY_TABLE, {})
         if bq_tables:
-            lines = [f"# BigQuery Tables ({name})", "", f"**Total:** {len(bq_tables)}", "",
-                     _table_row(["Table", "Dataset", "Type"]),
-                     _table_row(["---", "---", "---"])]
+            out.extend([f"## BigQuery Tables ({len(bq_tables)})", "",
+                        _table_row(["Table", "Dataset", "Type"]),
+                        _table_row(["---", "---", "---"])])
             for uid, info in bq_tables.items():
                 if isinstance(info, dict):
-                    ctx = info.get("gcp_context", {})
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("table_id", uid),
                         str(uid).split("/")[0] if "/" in str(uid) else "",
                         str(info.get("type", "")),
                     ]))
-            self._write(cdir / "bigquery_tables.md", "\n".join(lines))
+            out.append("")
 
         # VPC Networks
         vpcs = assets.get(SMT.GCP_VPC_NETWORK, {})
         if vpcs:
-            lines = [f"# VPC Networks ({name})", "", f"**Total:** {len(vpcs)}", "",
-                     _table_row(["Network", "Auto Create Subnets", "Routing Mode"]),
-                     _table_row(["---", "---", "---"])]
+            out.extend([f"## VPC Networks ({len(vpcs)})", "",
+                        _table_row(["Network", "Auto Create Subnets", "Routing Mode"]),
+                        _table_row(["---", "---", "---"])])
             for uid, info in vpcs.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("auto_create_subnetworks", "")),
                         str(info.get("routing_config", {}).get("routing_mode", "") if isinstance(info.get("routing_config"), dict) else ""),
                     ]))
-            self._write(cdir / "vpc_networks.md", "\n".join(lines))
+            out.append("")
 
         # Subnetworks
         subnets = assets.get(SMT.GCP_SUBNETWORK, {})
         if subnets:
-            lines = [f"# Subnetworks ({name})", "", f"**Total:** {len(subnets)}", "",
-                     _table_row(["Subnet", "Region", "CIDR", "Network"]),
-                     _table_row(["---", "---", "---", "---"])]
+            out.extend([f"## Subnetworks ({len(subnets)})", "",
+                        _table_row(["Subnet", "Region", "CIDR", "Network"]),
+                        _table_row(["---", "---", "---", "---"])])
             for uid, info in subnets.items():
                 if isinstance(info, dict):
                     network = str(info.get("network", "")).split("/")[-1]
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("region", "")),
                         str(info.get("ip_cidr_range", "")),
                         network,
                     ]))
-            self._write(cdir / "subnetworks.md", "\n".join(lines))
+            out.append("")
 
         # Firewall Rules
         fw = assets.get(SMT.GCP_FIREWALL_RULE, {})
         if fw:
-            lines = [f"# Firewall Rules ({name})", "", f"**Total:** {len(fw)}", "",
-                     _table_row(["Rule", "Direction", "Priority", "Network"]),
-                     _table_row(["---", "---", "---", "---"])]
+            out.extend([f"## Firewall Rules ({len(fw)})", "",
+                        _table_row(["Rule", "Direction", "Priority", "Network"]),
+                        _table_row(["---", "---", "---", "---"])])
             for uid, info in fw.items():
                 if isinstance(info, dict):
                     network = str(info.get("network", "")).split("/")[-1]
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("direction", "")),
                         str(info.get("priority", "")),
                         network,
                     ]))
-            self._write(cdir / "firewall_rules.md", "\n".join(lines))
+            out.append("")
 
         # Load Balancers
         lbs = assets.get(SMT.GCP_LOAD_BALANCER, {})
         if lbs:
-            lines = [f"# Load Balancers ({name})", "", f"**Total:** {len(lbs)}", "",
-                     _table_row(["Name", "Region", "IP", "Target"]),
-                     _table_row(["---", "---", "---", "---"])]
+            out.extend([f"## Load Balancers ({len(lbs)})", "",
+                        _table_row(["Name", "Region", "IP", "Target"]),
+                        _table_row(["---", "---", "---", "---"])])
             for uid, info in lbs.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("region", "")),
                         str(info.get("ip_address", info.get("IPAddress", "")))[:40],
                         str(info.get("target", "")).split("/")[-1][:60],
                     ]))
-            self._write(cdir / "load_balancers.md", "\n".join(lines))
+            out.append("")
 
         # Secrets
         secrets = assets.get(SMT.GCP_SECRET, {})
         if secrets:
-            lines = [f"# Secret Manager Secrets ({name})", "", f"**Total:** {len(secrets)}", ""]
+            out.extend([f"## Secret Manager Secrets ({len(secrets)})", ""])
             for uid, info in secrets.items():
                 secret_name = str(uid).split("/")[-1] if "/" in str(uid) else uid
-                lines.append(f"- {secret_name}")
-            self._write(cdir / "secrets.md", "\n".join(lines))
+                out.append(f"- {secret_name}")
+            out.append("")
 
         # Service Accounts
         sa = assets.get(SMT.GCP_SERVICE_ACCOUNT, {})
         if sa:
-            lines = [f"# Service Accounts ({name})", "", f"**Total:** {len(sa)}", "",
-                     _table_row(["Email", "Display Name", "Disabled"]),
-                     _table_row(["---", "---", "---"])]
+            out.extend([f"## Service Accounts ({len(sa)})", "",
+                        _table_row(["Email", "Display Name", "Disabled"]),
+                        _table_row(["---", "---", "---"])])
             for uid, info in sa.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("email", uid),
                         str(info.get("display_name", info.get("displayName", ""))),
                         str(info.get("disabled", "")),
                     ]))
-            self._write(cdir / "service_accounts.md", "\n".join(lines))
+            out.append("")
 
         # Log Sinks
         sinks = assets.get(SMT.GCP_LOG_SINK, {})
         if sinks:
-            lines = [f"# Log Sinks ({name})", "", f"**Total:** {len(sinks)}", "",
-                     _table_row(["Sink", "Destination"]),
-                     _table_row(["---", "---"])]
+            out.extend([f"## Log Sinks ({len(sinks)})", "",
+                        _table_row(["Sink", "Destination"]),
+                        _table_row(["---", "---"])])
             for uid, info in sinks.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("destination", ""))[:100],
                     ]))
-            self._write(cdir / "log_sinks.md", "\n".join(lines))
+            out.append("")
 
         # Log Metrics
         log_metrics = assets.get(SMT.GCP_LOG_METRIC, {})
         if log_metrics:
-            lines = [f"# Log-Based Metrics ({name})", "", f"**Total:** {len(log_metrics)}", "",
-                     _table_row(["Metric", "Filter"]),
-                     _table_row(["---", "---"])]
+            out.extend([f"## Log-Based Metrics ({len(log_metrics)})", "",
+                        _table_row(["Metric", "Filter"]),
+                        _table_row(["---", "---"])])
             for uid, info in log_metrics.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("filter", ""))[:150],
                     ]))
-            self._write(cdir / "log_metrics.md", "\n".join(lines))
+            out.append("")
+
+        return out
 
     # ---- GCM (Google Cloud Monitoring) ----
 
-    def _generate_gcm(self, name: str, ctype: str, assets: dict):
+    def _generate_gcm(self, name: str, ctype: str, assets: dict) -> list[str]:
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
 
-        cdir = self._connector_dir(name)
+        out: list[str] = []
 
         # Metrics
         metrics = assets.get(SMT.GCM_METRIC, {})
         if metrics:
-            lines = [f"# GCM Metrics ({name})", "", f"**Total:** {len(metrics)}", ""]
-            # Group by prefix (e.g. compute.googleapis.com, custom.googleapis.com)
+            out.extend([f"## Metrics ({len(metrics)})", ""])
             by_prefix: dict[str, list[str]] = {}
             for uid, info in metrics.items():
                 metric_type = info.get("metric_type", uid) if isinstance(info, dict) else uid
@@ -899,32 +890,31 @@ class MarkdownGenerator:
 
             for prefix in sorted(by_prefix.keys()):
                 metric_list = by_prefix[prefix]
-                lines.extend([f"## {prefix} ({len(metric_list)})", ""])
+                out.extend([f"### {prefix} ({len(metric_list)})", ""])
                 for m in sorted(metric_list):
-                    lines.append(f"- `{m}`")
-                lines.append("")
-            self._write(cdir / "metrics.md", "\n".join(lines))
+                    out.append(f"- `{m}`")
+                out.append("")
 
         # Dashboards
         dashboards = assets.get(SMT.GCM_DASHBOARD, {})
         if dashboards:
-            lines = [f"# GCM Dashboards ({name})", "", f"**Total:** {len(dashboards)}", "",
-                     _table_row(["Dashboard", "Widgets"]),
-                     _table_row(["---", "---"])]
+            out.extend([f"## Dashboards ({len(dashboards)})", "",
+                        _table_row(["Dashboard", "Widgets"]),
+                        _table_row(["---", "---"])])
             for uid, info in dashboards.items():
                 if isinstance(info, dict):
                     display = info.get("displayName", uid)
                     widgets = info.get("widgets", [])
                     widget_count = len(widgets) if isinstance(widgets, list) else 0
-                    lines.append(_table_row([display, str(widget_count)]))
-            self._write(cdir / "dashboards.md", "\n".join(lines))
+                    out.append(_table_row([display, str(widget_count)]))
+            out.append("")
 
         # Cloud Run Service Dashboards
         cr_dashboards = assets.get(SMT.GCM_CLOUD_RUN_SERVICE_DASHBOARD, {})
         if cr_dashboards:
-            lines = [f"# Cloud Run Service Dashboards ({name})", "", f"**Total:** {len(cr_dashboards)}", "",
-                     _table_row(["Service", "Region", "Metrics", "Console URL"]),
-                     _table_row(["---", "---", "---", "---"])]
+            out.extend([f"## Cloud Run Service Dashboards ({len(cr_dashboards)})", "",
+                        _table_row(["Service", "Region", "Metrics", "Console URL"]),
+                        _table_row(["---", "---", "---", "---"])])
             for uid, info in cr_dashboards.items():
                 if isinstance(info, dict):
                     svc = info.get("service_name", uid)
@@ -932,80 +922,79 @@ class MarkdownGenerator:
                     metrics_list = info.get("metrics", [])
                     metric_count = len(metrics_list) if isinstance(metrics_list, list) else 0
                     url = info.get("url", "")
-                    lines.append(_table_row([svc, region, str(metric_count), url[:80]]))
-            self._write(cdir / "cloud_run_dashboards.md", "\n".join(lines))
+                    out.append(_table_row([svc, region, str(metric_count), url[:80]]))
+            out.append("")
+
+        return out
 
     # ---- New Relic ----
 
-    def _generate_newrelic(self, name: str, ctype: str, assets: dict):
+    def _generate_newrelic(self, name: str, ctype: str, assets: dict) -> list[str]:
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
 
-        cdir = self._connector_dir(name)
-        lines = [f"# New Relic ({name})", ""]
+        out: list[str] = []
 
         policies = assets.get(SMT.NEW_RELIC_POLICY, {})
         if policies:
-            lines.extend([f"## Alert Policies ({len(policies)})", "",
-                          _table_row(["Policy", "ID"]), _table_row(["---", "---"])])
+            out.extend([f"## Alert Policies ({len(policies)})", "",
+                        _table_row(["Policy", "ID"]), _table_row(["---", "---"])])
             for uid, info in policies.items():
                 pname = info.get("name", uid) if isinstance(info, dict) else uid
-                lines.append(_table_row([pname, uid]))
-            lines.append("")
+                out.append(_table_row([pname, uid]))
+            out.append("")
 
         entities = assets.get(SMT.NEW_RELIC_ENTITY, {})
         if entities:
-            lines.extend([f"## Entities ({len(entities)})", "",
-                          _table_row(["Entity", "Type"]), _table_row(["---", "---"])])
+            out.extend([f"## Entities ({len(entities)})", "",
+                        _table_row(["Entity", "Type"]), _table_row(["---", "---"])])
             for uid, info in entities.items():
                 ename = info.get("name", uid) if isinstance(info, dict) else uid
                 etype = info.get("type", "") if isinstance(info, dict) else ""
-                lines.append(_table_row([ename, str(etype)]))
-            lines.append("")
+                out.append(_table_row([ename, str(etype)]))
+            out.append("")
 
-        self._write(cdir / "details.md", "\n".join(lines))
+        return out
 
     # ---- GitHub ----
 
-    def _generate_github(self, name: str, ctype: str, assets: dict):
+    def _generate_github(self, name: str, ctype: str, assets: dict) -> list[str]:
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
 
-        cdir = self._connector_dir(name)
-        lines = [f"# GitHub ({name})", ""]
+        out: list[str] = []
 
         repos = assets.get(SMT.GITHUB_REPOSITORY, {})
         if repos:
-            lines.extend([f"## Repositories ({len(repos)})", "",
-                          _table_row(["Repository", "Description"]), _table_row(["---", "---"])])
+            out.extend([f"## Repositories ({len(repos)})", "",
+                        _table_row(["Repository", "Description"]), _table_row(["---", "---"])])
             for uid, info in repos.items():
                 rname = info.get("name", uid) if isinstance(info, dict) else uid
                 desc = info.get("description", "") if isinstance(info, dict) else ""
-                lines.append(_table_row([rname, str(desc)[:200]]))
-            lines.append("")
+                out.append(_table_row([rname, str(desc)[:200]]))
+            out.append("")
 
         members = assets.get(SMT.GITHUB_MEMBER, {})
         if members:
-            lines.extend([f"## Members ({len(members)})", ""])
+            out.extend([f"## Members ({len(members)})", ""])
             for uid, info in members.items():
                 mname = info.get("login", info.get("name", uid)) if isinstance(info, dict) else uid
-                lines.append(f"- {mname}")
-            lines.append("")
+                out.append(f"- {mname}")
+            out.append("")
 
-        self._write(cdir / "details.md", "\n".join(lines))
+        return out
 
     # ---- Databases ----
 
-    def _generate_database(self, name: str, ctype: str, assets: dict):
+    def _generate_database(self, name: str, ctype: str, assets: dict) -> list[str]:
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
 
-        cdir = self._connector_dir(name)
-        lines = [f"# Database ({name}) - {ctype}", ""]
+        out: list[str] = []
 
         for model_type, items in assets.items():
             if not items:
                 continue
             mt_name = _model_type_name(model_type)
-            lines.extend([f"## {mt_name} ({len(items)})", "",
-                          _table_row(["Name", "Details"]), _table_row(["---", "---"])])
+            out.extend([f"## {mt_name} ({len(items)})", "",
+                        _table_row(["Name", "Details"]), _table_row(["---", "---"])])
             for uid, info in items.items():
                 iname = info.get("name", info.get("table_name", uid)) if isinstance(info, dict) else uid
                 details = ""
@@ -1013,125 +1002,126 @@ class MarkdownGenerator:
                     cols = info.get("columns", info.get("fields", []))
                     if isinstance(cols, list):
                         details = ", ".join(str(c)[:50] for c in cols[:10])
-                lines.append(_table_row([iname, details[:200]]))
-            lines.append("")
+                out.append(_table_row([iname, details[:200]]))
+            out.append("")
 
-        self._write(cdir / "tables.md", "\n".join(lines))
+        return out
 
     # ---- Search Indexes ----
 
-    def _generate_search_index(self, name: str, ctype: str, assets: dict):
+    def _generate_search_index(self, name: str, ctype: str, assets: dict) -> list[str]:
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
 
-        cdir = self._connector_dir(name)
-        lines = [f"# {ctype} ({name})", ""]
+        out: list[str] = []
 
         for model_type, items in assets.items():
             if not items:
                 continue
             mt_name = _model_type_name(model_type)
-            lines.extend([f"## {mt_name} ({len(items)})", "",
-                          _table_row(["Index/Resource", "Details"]), _table_row(["---", "---"])])
+            out.extend([f"## {mt_name} ({len(items)})", "",
+                        _table_row(["Index/Resource", "Details"]), _table_row(["---", "---"])])
             for uid, info in items.items():
                 iname = info.get("name", uid) if isinstance(info, dict) else uid
-                lines.append(_table_row([iname, ""]))
-            lines.append("")
+                out.append(_table_row([iname, ""]))
+            out.append("")
 
-        self._write(cdir / "indices.md", "\n".join(lines))
+        return out
 
     # ---- Sentry ----
 
-    def _generate_sentry(self, name: str, ctype: str, assets: dict):
+    def _generate_sentry(self, name: str, ctype: str, assets: dict) -> list[str]:
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
 
-        cdir = self._connector_dir(name)
+        out: list[str] = []
 
         projects = assets.get(SMT.SENTRY_PROJECT, {})
         if projects:
-            lines = [f"# Sentry Projects ({name})", "", f"**Total:** {len(projects)}", "",
-                     _table_row(["Project", "Slug", "Platform", "Status"]),
-                     _table_row(["---", "---", "---", "---"])]
+            out.extend([f"## Projects ({len(projects)})", "",
+                        _table_row(["Project", "Slug", "Platform", "Status"]),
+                        _table_row(["---", "---", "---", "---"])])
             for uid, info in projects.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("slug", "")),
                         str(info.get("platform", "")),
                         str(info.get("status", "")),
                     ]))
-            self._write(cdir / "projects.md", "\n".join(lines))
+            out.append("")
+
+        return out
 
     # ---- Azure ----
 
-    def _generate_azure(self, name: str, ctype: str, assets: dict):
+    def _generate_azure(self, name: str, ctype: str, assets: dict) -> list[str]:
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
 
-        cdir = self._connector_dir(name)
+        out: list[str] = []
 
         # ---- Core: Resource Groups ----
         rgs = assets.get(SMT.AZURE_RESOURCE_GROUP, {})
         if rgs:
-            lines = [f"# Azure Resource Groups ({name})", "", f"**Total:** {len(rgs)}", "",
-                     _table_row(["Resource Group", "Location", "State"]),
-                     _table_row(["---", "---", "---"])]
+            out.extend([f"## Resource Groups ({len(rgs)})", "",
+                        _table_row(["Resource Group", "Location", "State"]),
+                        _table_row(["---", "---", "---"])])
             for uid, info in rgs.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("location", "")),
                         str(info.get("provisioning_state", "")),
                     ]))
-            self._write(cdir / "resource_groups.md", "\n".join(lines))
+            out.append("")
 
         # ---- Core: Log Analytics Workspaces ----
         ws = assets.get(SMT.AZURE_WORKSPACE, {})
         if ws:
-            lines = [f"# Azure Log Analytics Workspaces ({name})", "", f"**Total:** {len(ws)}", "",
-                     _table_row(["Workspace", "ID", "Location"]),
-                     _table_row(["---", "---", "---"])]
+            out.extend([f"## Log Analytics Workspaces ({len(ws)})", "",
+                        _table_row(["Workspace", "ID", "Location"]),
+                        _table_row(["---", "---", "---"])])
             for uid, info in ws.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("customer_id", uid)),
                         str(info.get("location", "")),
                     ]))
-            self._write(cdir / "workspaces.md", "\n".join(lines))
+            out.append("")
 
         # ---- Core: Generic Resources ----
         resources = assets.get(SMT.AZURE_RESOURCE, {})
         if resources:
-            lines = [f"# Azure Resources ({name})", "", f"**Total:** {len(resources)}", "",
-                     _table_row(["Resource", "Type", "Location", "Resource Group"]),
-                     _table_row(["---", "---", "---", "---"])]
+            out.extend([f"## Resources ({len(resources)})", "",
+                        _table_row(["Resource", "Type", "Location", "Resource Group"]),
+                        _table_row(["---", "---", "---", "---"])])
             for uid, info in resources.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("type", "")),
                         str(info.get("location", "")),
                         str(info.get("resource_group", "")),
                     ]))
-            self._write(cdir / "resources.md", "\n".join(lines))
+            out.append("")
 
         # ---- AKS: Clusters ----
         aks_clusters = assets.get(SMT.AZURE_AKS_CLUSTER, {})
         if aks_clusters:
-            lines = [f"# AKS Clusters ({name})", "", f"**Total:** {len(aks_clusters)}", "",
-                     _table_row(["Cluster", "Location", "K8s Version", "State", "Resource Group"]),
-                     _table_row(["---", "---", "---", "---", "---"])]
+            out.extend([f"## AKS Clusters ({len(aks_clusters)})", "",
+                        _table_row(["Cluster", "Location", "K8s Version", "State", "Resource Group"]),
+                        _table_row(["---", "---", "---", "---", "---"])])
             for uid, info in aks_clusters.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("location", "")),
                         str(info.get("kubernetes_version", "")),
                         str(info.get("provisioning_state", "")),
                         str(info.get("resource_group", "")),
                     ]))
-            self._write(cdir / "aks_clusters.md", "\n".join(lines))
+            out.append("")
 
-        # ---- AKS: K8s-style resources (namespaces, deployments, services, etc.) ----
+        # ---- AKS: K8s-style resources ----
         aks_k8s_types = {
             "namespace": SMT.AZURE_AKS_NAMESPACE,
             "deployment": SMT.AZURE_AKS_DEPLOYMENT,
@@ -1146,52 +1136,51 @@ class MarkdownGenerator:
             items = assets.get(model_type, {})
             if not items:
                 continue
-            lines = [f"# AKS {resource_name.replace('_', ' ').title()}s ({name})", "",
-                     f"**Total:** {len(items)}", ""]
+            out.extend([f"## AKS {resource_name.replace('_', ' ').title()}s ({len(items)})", ""])
             if resource_name == "namespace":
                 for uid, info in items.items():
                     ns = info.get("metadata", {}).get("name", uid) if isinstance(info, dict) else uid
                     cluster = info.get("aks_context", {}).get("cluster", "") if isinstance(info, dict) else ""
-                    lines.append(f"- {cluster}/{ns}" if cluster else f"- {ns}")
+                    out.append(f"- {cluster}/{ns}" if cluster else f"- {ns}")
             elif resource_name == "deployment":
-                lines.extend([_table_row(["Name", "Namespace", "Cluster", "Replicas", "Ready"]),
-                              _table_row(["---", "---", "---", "---", "---"])])
+                out.extend([_table_row(["Name", "Namespace", "Cluster", "Replicas", "Ready"]),
+                            _table_row(["---", "---", "---", "---", "---"])])
                 for uid, info in items.items():
                     if isinstance(info, dict):
                         meta = info.get("metadata", {})
                         spec = info.get("spec", {})
                         status = info.get("status", {})
                         ctx = info.get("aks_context", {})
-                        lines.append(_table_row([
+                        out.append(_table_row([
                             meta.get("name", uid), meta.get("namespace", ""),
                             ctx.get("cluster", ""),
                             str(spec.get("replicas", "")),
                             str(status.get("ready_replicas", "")),
                         ]))
             elif resource_name == "service":
-                lines.extend([_table_row(["Name", "Namespace", "Cluster", "Type", "Cluster IP"]),
-                              _table_row(["---", "---", "---", "---", "---"])])
+                out.extend([_table_row(["Name", "Namespace", "Cluster", "Type", "Cluster IP"]),
+                            _table_row(["---", "---", "---", "---", "---"])])
                 for uid, info in items.items():
                     if isinstance(info, dict):
                         meta = info.get("metadata", {})
                         spec = info.get("spec", {})
                         ctx = info.get("aks_context", {})
-                        lines.append(_table_row([
+                        out.append(_table_row([
                             meta.get("name", uid), meta.get("namespace", ""),
                             ctx.get("cluster", ""),
                             str(spec.get("type", "")),
                             str(spec.get("cluster_ip", "")),
                         ]))
             elif resource_name == "hpa":
-                lines.extend([_table_row(["Name", "Namespace", "Cluster", "Min", "Max", "Current"]),
-                              _table_row(["---", "---", "---", "---", "---", "---"])])
+                out.extend([_table_row(["Name", "Namespace", "Cluster", "Min", "Max", "Current"]),
+                            _table_row(["---", "---", "---", "---", "---", "---"])])
                 for uid, info in items.items():
                     if isinstance(info, dict):
                         meta = info.get("metadata", {})
                         spec = info.get("spec", {})
                         status = info.get("status", {})
                         ctx = info.get("aks_context", {})
-                        lines.append(_table_row([
+                        out.append(_table_row([
                             meta.get("name", uid), meta.get("namespace", ""),
                             ctx.get("cluster", ""),
                             str(spec.get("min_replicas", "")),
@@ -1199,28 +1188,27 @@ class MarkdownGenerator:
                             str(status.get("current_replicas", "")),
                         ]))
             else:
-                lines.extend([_table_row(["Name", "Namespace", "Cluster"]),
-                              _table_row(["---", "---", "---"])])
+                out.extend([_table_row(["Name", "Namespace", "Cluster"]),
+                            _table_row(["---", "---", "---"])])
                 for uid, info in items.items():
                     if isinstance(info, dict):
                         meta = info.get("metadata", {})
                         ctx = info.get("aks_context", {})
-                        lines.append(_table_row([
+                        out.append(_table_row([
                             meta.get("name", uid), meta.get("namespace", ""),
                             ctx.get("cluster", ""),
                         ]))
-            lines.append("")
-            self._write(cdir / f"aks_{resource_name}s.md", "\n".join(lines))
+            out.append("")
 
         # ---- Compute: Virtual Machines ----
         vms = assets.get(SMT.AZURE_VIRTUAL_MACHINE, {})
         if vms:
-            lines = [f"# Azure Virtual Machines ({name})", "", f"**Total:** {len(vms)}", "",
-                     _table_row(["VM", "Size", "OS", "Location", "State", "Resource Group"]),
-                     _table_row(["---", "---", "---", "---", "---", "---"])]
+            out.extend([f"## Virtual Machines ({len(vms)})", "",
+                        _table_row(["VM", "Size", "OS", "Location", "State", "Resource Group"]),
+                        _table_row(["---", "---", "---", "---", "---", "---"])])
             for uid, info in vms.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("vm_size", "")),
                         str(info.get("os_type", "")),
@@ -1228,118 +1216,118 @@ class MarkdownGenerator:
                         str(info.get("provisioning_state", "")),
                         str(info.get("resource_group", "")),
                     ]))
-            self._write(cdir / "virtual_machines.md", "\n".join(lines))
+            out.append("")
 
         # ---- Compute: VM Scale Sets ----
         vmss = assets.get(SMT.AZURE_VMSS, {})
         if vmss:
-            lines = [f"# Azure VM Scale Sets ({name})", "", f"**Total:** {len(vmss)}", "",
-                     _table_row(["VMSS", "SKU", "Capacity", "Location", "State"]),
-                     _table_row(["---", "---", "---", "---", "---"])]
+            out.extend([f"## VM Scale Sets ({len(vmss)})", "",
+                        _table_row(["VMSS", "SKU", "Capacity", "Location", "State"]),
+                        _table_row(["---", "---", "---", "---", "---"])])
             for uid, info in vmss.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("sku_name", "")),
                         str(info.get("capacity", "")),
                         str(info.get("location", "")),
                         str(info.get("provisioning_state", "")),
                     ]))
-            self._write(cdir / "vmss.md", "\n".join(lines))
+            out.append("")
 
         # ---- Storage: Accounts ----
         sa = assets.get(SMT.AZURE_STORAGE_ACCOUNT, {})
         if sa:
-            lines = [f"# Azure Storage Accounts ({name})", "", f"**Total:** {len(sa)}", "",
-                     _table_row(["Account", "Kind", "SKU", "Tier", "Location"]),
-                     _table_row(["---", "---", "---", "---", "---"])]
+            out.extend([f"## Storage Accounts ({len(sa)})", "",
+                        _table_row(["Account", "Kind", "SKU", "Tier", "Location"]),
+                        _table_row(["---", "---", "---", "---", "---"])])
             for uid, info in sa.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("kind", "")),
                         str(info.get("sku_name", "")),
                         str(info.get("access_tier", "")),
                         str(info.get("location", "")),
                     ]))
-            self._write(cdir / "storage_accounts.md", "\n".join(lines))
+            out.append("")
 
         # ---- Storage: Blob Containers ----
         blobs = assets.get(SMT.AZURE_BLOB_CONTAINER, {})
         if blobs:
-            lines = [f"# Azure Blob Containers ({name})", "", f"**Total:** {len(blobs)}", "",
-                     _table_row(["Container", "Storage Account", "Public Access", "Lease Status"]),
-                     _table_row(["---", "---", "---", "---"])]
+            out.extend([f"## Blob Containers ({len(blobs)})", "",
+                        _table_row(["Container", "Storage Account", "Public Access", "Lease Status"]),
+                        _table_row(["---", "---", "---", "---"])])
             for uid, info in blobs.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("storage_account", "")),
                         str(info.get("public_access", "")),
                         str(info.get("lease_status", "")),
                     ]))
-            self._write(cdir / "blob_containers.md", "\n".join(lines))
+            out.append("")
 
         # ---- Database: SQL Servers ----
         sql_servers = assets.get(SMT.AZURE_SQL_SERVER, {})
         if sql_servers:
-            lines = [f"# Azure SQL Servers ({name})", "", f"**Total:** {len(sql_servers)}", "",
-                     _table_row(["Server", "FQDN", "Version", "State", "Location"]),
-                     _table_row(["---", "---", "---", "---", "---"])]
+            out.extend([f"## SQL Servers ({len(sql_servers)})", "",
+                        _table_row(["Server", "FQDN", "Version", "State", "Location"]),
+                        _table_row(["---", "---", "---", "---", "---"])])
             for uid, info in sql_servers.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("fully_qualified_domain_name", "")),
                         str(info.get("version", "")),
                         str(info.get("state", "")),
                         str(info.get("location", "")),
                     ]))
-            self._write(cdir / "sql_servers.md", "\n".join(lines))
+            out.append("")
 
         # ---- Database: SQL Databases ----
         sql_dbs = assets.get(SMT.AZURE_SQL_DATABASE, {})
         if sql_dbs:
-            lines = [f"# Azure SQL Databases ({name})", "", f"**Total:** {len(sql_dbs)}", "",
-                     _table_row(["Database", "Server", "SKU", "Tier", "Status"]),
-                     _table_row(["---", "---", "---", "---", "---"])]
+            out.extend([f"## SQL Databases ({len(sql_dbs)})", "",
+                        _table_row(["Database", "Server", "SKU", "Tier", "Status"]),
+                        _table_row(["---", "---", "---", "---", "---"])])
             for uid, info in sql_dbs.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("server_name", "")),
                         str(info.get("sku_name", "")),
                         str(info.get("sku_tier", "")),
                         str(info.get("status", "")),
                     ]))
-            self._write(cdir / "sql_databases.md", "\n".join(lines))
+            out.append("")
 
         # ---- Database: Cosmos DB ----
         cosmos = assets.get(SMT.AZURE_COSMOS_ACCOUNT, {})
         if cosmos:
-            lines = [f"# Azure Cosmos DB Accounts ({name})", "", f"**Total:** {len(cosmos)}", "",
-                     _table_row(["Account", "Kind", "Endpoint", "Location", "State"]),
-                     _table_row(["---", "---", "---", "---", "---"])]
+            out.extend([f"## Cosmos DB Accounts ({len(cosmos)})", "",
+                        _table_row(["Account", "Kind", "Endpoint", "Location", "State"]),
+                        _table_row(["---", "---", "---", "---", "---"])])
             for uid, info in cosmos.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("kind", "")),
                         str(info.get("document_endpoint", ""))[:80],
                         str(info.get("location", "")),
                         str(info.get("provisioning_state", "")),
                     ]))
-            self._write(cdir / "cosmos_accounts.md", "\n".join(lines))
+            out.append("")
 
         # ---- Database: PostgreSQL Flexible Servers ----
         pg_servers = assets.get(SMT.AZURE_POSTGRES_SERVER, {})
         if pg_servers:
-            lines = [f"# Azure PostgreSQL Servers ({name})", "", f"**Total:** {len(pg_servers)}", "",
-                     _table_row(["Server", "FQDN", "Version", "SKU", "Storage GB", "State"]),
-                     _table_row(["---", "---", "---", "---", "---", "---"])]
+            out.extend([f"## PostgreSQL Servers ({len(pg_servers)})", "",
+                        _table_row(["Server", "FQDN", "Version", "SKU", "Storage GB", "State"]),
+                        _table_row(["---", "---", "---", "---", "---", "---"])])
             for uid, info in pg_servers.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("fully_qualified_domain_name", "")),
                         str(info.get("version", "")),
@@ -1347,33 +1335,33 @@ class MarkdownGenerator:
                         str(info.get("storage_size_gb", "")),
                         str(info.get("state", "")),
                     ]))
-            self._write(cdir / "postgres_servers.md", "\n".join(lines))
+            out.append("")
 
         # ---- Database: PostgreSQL Databases ----
         pg_dbs = assets.get(SMT.AZURE_POSTGRES_DATABASE, {})
         if pg_dbs:
-            lines = [f"# Azure PostgreSQL Databases ({name})", "", f"**Total:** {len(pg_dbs)}", "",
-                     _table_row(["Database", "Server", "Charset", "Collation"]),
-                     _table_row(["---", "---", "---", "---"])]
+            out.extend([f"## PostgreSQL Databases ({len(pg_dbs)})", "",
+                        _table_row(["Database", "Server", "Charset", "Collation"]),
+                        _table_row(["---", "---", "---", "---"])])
             for uid, info in pg_dbs.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("server_name", "")),
                         str(info.get("charset", "")),
                         str(info.get("collation", "")),
                     ]))
-            self._write(cdir / "postgres_databases.md", "\n".join(lines))
+            out.append("")
 
         # ---- Cache: Redis ----
         redis = assets.get(SMT.AZURE_REDIS_CACHE, {})
         if redis:
-            lines = [f"# Azure Redis Caches ({name})", "", f"**Total:** {len(redis)}", "",
-                     _table_row(["Cache", "Hostname", "Port", "SKU", "Version", "State"]),
-                     _table_row(["---", "---", "---", "---", "---", "---"])]
+            out.extend([f"## Redis Caches ({len(redis)})", "",
+                        _table_row(["Cache", "Hostname", "Port", "SKU", "Version", "State"]),
+                        _table_row(["---", "---", "---", "---", "---", "---"])])
             for uid, info in redis.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("host_name", "")),
                         str(info.get("ssl_port", info.get("port", ""))),
@@ -1381,81 +1369,84 @@ class MarkdownGenerator:
                         str(info.get("redis_version", "")),
                         str(info.get("provisioning_state", "")),
                     ]))
-            self._write(cdir / "redis_caches.md", "\n".join(lines))
+            out.append("")
 
         # ---- Monitor: Metric Alerts ----
         alerts = assets.get(SMT.AZURE_METRIC_ALERT, {})
         if alerts:
-            lines = [f"# Azure Metric Alerts ({name})", "", f"**Total:** {len(alerts)}", "",
-                     _table_row(["Alert", "Severity", "Enabled", "Description"]),
-                     _table_row(["---", "---", "---", "---"])]
+            out.extend([f"## Metric Alerts ({len(alerts)})", "",
+                        _table_row(["Alert", "Severity", "Enabled", "Description"]),
+                        _table_row(["---", "---", "---", "---"])])
             for uid, info in alerts.items():
                 if isinstance(info, dict):
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("severity", "")),
                         str(info.get("enabled", "")),
                         str(info.get("description", ""))[:150],
                     ]))
-            self._write(cdir / "metric_alerts.md", "\n".join(lines))
+            out.append("")
 
         # ---- Monitor: Action Groups ----
         action_groups = assets.get(SMT.AZURE_ACTION_GROUP, {})
         if action_groups:
-            lines = [f"# Azure Action Groups ({name})", "", f"**Total:** {len(action_groups)}", "",
-                     _table_row(["Group", "Short Name", "Enabled", "Email Receivers", "Webhook Receivers"]),
-                     _table_row(["---", "---", "---", "---", "---"])]
+            out.extend([f"## Action Groups ({len(action_groups)})", "",
+                        _table_row(["Group", "Short Name", "Enabled", "Email Receivers", "Webhook Receivers"]),
+                        _table_row(["---", "---", "---", "---", "---"])])
             for uid, info in action_groups.items():
                 if isinstance(info, dict):
                     emails = info.get("email_receivers", [])
                     webhooks = info.get("webhook_receivers", [])
-                    lines.append(_table_row([
+                    out.append(_table_row([
                         info.get("name", uid),
                         str(info.get("group_short_name", "")),
                         str(info.get("enabled", "")),
                         str(len(emails)),
                         str(len(webhooks)),
                     ]))
-            self._write(cdir / "action_groups.md", "\n".join(lines))
+            out.append("")
+
+        return out
 
     # ---- SigNoz ----
 
-    def _generate_signoz(self, name: str, ctype: str, assets: dict):
+    def _generate_signoz(self, name: str, ctype: str, assets: dict) -> list[str]:
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
 
-        cdir = self._connector_dir(name)
+        out: list[str] = []
 
         services = assets.get(SMT.SIGNOZ_SERVICE, {})
         if services:
-            lines = [f"# SigNoz Services ({name})", "", f"**Total:** {len(services)}", "",
-                     _table_row(["Service"]), _table_row(["---"])]
+            out.extend([f"## Services ({len(services)})", "",
+                        _table_row(["Service"]), _table_row(["---"])])
             for uid, info in services.items():
                 sname = info.get("name", uid) if isinstance(info, dict) else uid
-                lines.append(_table_row([sname]))
-            self._write(cdir / "services.md", "\n".join(lines))
+                out.append(_table_row([sname]))
+            out.append("")
 
         dashboards = assets.get(SMT.SIGNOZ_DASHBOARD, {})
         if dashboards:
-            lines = [f"# SigNoz Dashboards ({name})", "", f"**Total:** {len(dashboards)}", "",
-                     _table_row(["Dashboard", "ID"]), _table_row(["---", "---"])]
+            out.extend([f"## Dashboards ({len(dashboards)})", "",
+                        _table_row(["Dashboard", "ID"]), _table_row(["---", "---"])])
             for uid, info in dashboards.items():
                 dname = info.get("title", info.get("name", uid)) if isinstance(info, dict) else uid
-                lines.append(_table_row([dname, uid]))
-            self._write(cdir / "dashboards.md", "\n".join(lines))
+                out.append(_table_row([dname, uid]))
+            out.append("")
+
+        return out
 
     # ---- Generic fallback ----
 
-    def _generate_generic(self, name: str, ctype: str, assets: dict):
+    def _generate_generic(self, name: str, ctype: str, assets: dict) -> list[str]:
         """Generic generator for connector types without specific handling."""
-        cdir = self._connector_dir(name)
-        lines = [f"# {ctype} ({name})", ""]
+        out: list[str] = []
 
         for model_type, items in assets.items():
             if not items:
                 continue
             mt_name = _model_type_name(model_type)
-            lines.extend([f"## {mt_name} ({len(items)})", "",
-                          _table_row(["Name/ID", "Details"]), _table_row(["---", "---"])])
+            out.extend([f"## {mt_name} ({len(items)})", "",
+                        _table_row(["Name/ID", "Details"]), _table_row(["---", "---"])])
             for uid, info in items.items():
                 if isinstance(info, dict):
                     iname = info.get("name", info.get("title", uid))
@@ -1463,18 +1454,15 @@ class MarkdownGenerator:
                 else:
                     iname = uid
                     details = str(info)[:200]
-                lines.append(_table_row([iname, details]))
-            lines.append("")
+                out.append(_table_row([iname, details]))
+            out.append("")
 
-        self._write(cdir / "details.md", "\n".join(lines))
+        return out
 
     # ---- Cross-service aggregation ----
 
     def generate_service_crossref(self, all_results: dict[str, dict]):
-        """Generate cross_references/services.md by cross-referencing service names across connectors.
-
-        Scans all connector assets for service-like entities and groups them by name.
-        """
+        """Generate cross_references/services.md by cross-referencing service names across connectors."""
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
 
         # Model types that represent "services"
@@ -1577,11 +1565,7 @@ class MarkdownGenerator:
     # ---- Overview ----
 
     def generate_overview(self, all_results: dict[str, dict]):
-        """Generate the top-level overview.md summarizing all connectors.
-
-        Args:
-            all_results: {connector_name: {connector_type: str, assets: dict, error: str|None}}
-        """
+        """Generate the top-level overview.md summarizing all connectors."""
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         lines = [
             "# Infrastructure Overview",
@@ -1619,12 +1603,8 @@ class MarkdownGenerator:
             "```",
             "resources/",
             "  connectors/",
-            "    <name>/          - All assets for one connector",
-            "      _summary.md    - Resource counts",
-            "      dashboards.md  - Dashboard index",
-            "      alerts.md      - Alert rules / monitors",
-            "      services.md    - Discovered services",
-            "      ...            - Other resource-type files",
+            "    <name>/",
+            "      context.md     - All resources for this connector",
             "  cross_references/",
             "    services.md      - Services seen across multiple connectors",
             "```",

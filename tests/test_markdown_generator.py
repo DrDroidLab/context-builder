@@ -24,11 +24,10 @@ class TestMarkdownGenerator:
         # Mock SourceModelType with plain int
         assets = {301: {"uid1": {"name": "Prometheus", "type": "prometheus"}}}
 
-        gen._generate_summary("grafana_prod", "GRAFANA", assets)
+        lines = gen._generate_summary("grafana_prod", "GRAFANA", assets)
 
-        summary_file = tmp_path / "resources" / "connectors" / "grafana_prod" / "_summary.md"
-        assert summary_file.exists()
-        content = summary_file.read_text()
+        assert isinstance(lines, list)
+        content = "\n".join(lines)
         assert "grafana_prod" in content
         assert "GRAFANA" in content
 
@@ -61,9 +60,21 @@ class TestMarkdownGenerator:
         gen = MarkdownGenerator(tmp_path)
         assets = {2801: {"app1": {"name": "my-app", "status": "healthy"}}}
 
-        gen._generate_generic("argocd_prod", "ARGOCD", assets)
+        lines = gen._generate_generic("argocd_prod", "ARGOCD", assets)
 
-        detail_file = tmp_path / "resources" / "connectors" / "argocd_prod" / "details.md"
-        assert detail_file.exists()
-        content = detail_file.read_text()
+        assert isinstance(lines, list)
+        content = "\n".join(lines)
+        assert "my-app" in content
+
+    def test_generate_all_single_file(self, tmp_path):
+        gen = MarkdownGenerator(tmp_path)
+        assets = {2801: {"app1": {"name": "my-app", "status": "healthy"}}}
+
+        gen.generate_all("argocd_prod", "ARGOCD", assets)
+
+        context_file = tmp_path / "resources" / "connectors" / "argocd_prod" / "context.md"
+        assert context_file.exists()
+        content = context_file.read_text()
+        assert "argocd_prod" in content
+        assert "ARGOCD" in content
         assert "my-app" in content
