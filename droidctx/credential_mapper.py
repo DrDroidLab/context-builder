@@ -49,6 +49,8 @@ CREDENTIAL_KEY_MAPPINGS = {
     "GITHUB": {
         "github_token": "api_key",
         "github_org": "org",
+        # VPC agent format
+        "token": "api_key",
     },
     "JIRA_CLOUD": {
         "jira_url": "jira_domain",
@@ -61,10 +63,12 @@ CREDENTIAL_KEY_MAPPINGS = {
         "jenkins_api_token": "api_token",
     },
     "ELASTIC_SEARCH": {
-        "es_host": "host",
+        "es_host": "_es_host_url",  # Parsed into protocol/host/port in yaml_creds_to_extractor_kwargs
         "es_api_key": "api_key",
+        "es_api_key_id": "api_key_id",
         "es_username": "username",
         "es_password": "password",
+        # VPC agent format uses raw constructor names (protocol, host, port, api_key_id, api_key) — pass through
     },
     "OPEN_SEARCH": {
         "os_host": "host",
@@ -74,10 +78,15 @@ CREDENTIAL_KEY_MAPPINGS = {
     "SENTRY": {
         "sentry_api_key": "api_key",
         "sentry_org": "org_slug",
+        # VPC agent format
+        "org": "org_slug",
     },
     "POSTHOG": {
         "posthog_host": "posthog_host",
         "posthog_api_key": "personal_api_key",
+        # VPC agent format
+        "api_key": "personal_api_key",
+        "app_host": "posthog_host",
     },
     "SIGNOZ": {
         "signoz_host": "signoz_api_url",
@@ -98,6 +107,10 @@ CREDENTIAL_KEY_MAPPINGS = {
     },
     "NEW_RELIC": {
         "nr_account_id": "nr_app_id",
+        # VPC agent format
+        "api_key": "nr_api_key",
+        "app_id": "nr_app_id",
+        "api_domain": "nr_api_domain",
     },
     "AZURE": {
         "azure_tenant_id": "tenant_id",
@@ -117,8 +130,10 @@ CREDENTIAL_KEY_MAPPINGS = {
         "coralogix_domain": "domain",
     },
     "VICTORIA_LOGS": {
-        "vl_host": "VICTORIA_LOGS_HOST",
-        "vl_api_key": "VICTORIA_LOGS_HEADERS",
+        "vl_host": "host",
+        "vl_api_key": "headers_json",
+        # VPC agent format
+        "victoria_logs_headers": "headers_json",
     },
 }
 
@@ -142,6 +157,17 @@ def yaml_creds_to_extractor_kwargs(connector_type: str, yaml_config: dict) -> di
             kwargs[mapped_key] = value
         else:
             kwargs[key] = value
+
+    # Elasticsearch: parse es_host URL into protocol, host, port
+    if connector_type == "ELASTIC_SEARCH" and "_es_host_url" in kwargs:
+        from urllib.parse import urlparse
+        url = kwargs.pop("_es_host_url")
+        parsed = urlparse(url)
+        kwargs["protocol"] = parsed.scheme or "https"
+        kwargs["host"] = parsed.hostname or url
+        kwargs["port"] = str(parsed.port or "9200")
+        kwargs.setdefault("api_key_id", "")
+        kwargs.setdefault("api_key", "")
 
     return kwargs
 

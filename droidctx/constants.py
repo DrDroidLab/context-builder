@@ -77,7 +77,7 @@ CONNECTOR_CREDENTIALS = {
     },
     "ELASTIC_SEARCH": {
         "required": ["es_host"],
-        "optional": ["es_api_key", "es_username", "es_password"],
+        "optional": ["es_api_key", "es_api_key_id", "es_username", "es_password"],
         "cli_tool": None,
         "description": "Elasticsearch indices and field mappings",
     },

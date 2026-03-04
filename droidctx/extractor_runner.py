@@ -176,6 +176,22 @@ def run_extractor(
     # Convert YAML keys to extractor kwargs
     creds_kwargs = yaml_creds_to_extractor_kwargs(connector_type, yaml_config)
 
+    # Filter kwargs to only what the constructor accepts (avoid unexpected keyword errors)
+    try:
+        sig = inspect.signature(extractor_class.__init__)
+        valid_params = set(sig.parameters.keys()) - {"self"}
+        has_var_keyword = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD
+            for p in sig.parameters.values()
+        )
+        if not has_var_keyword:
+            unknown = set(creds_kwargs.keys()) - valid_params - {"request_id", "connector_name"}
+            for k in unknown:
+                logger.debug(f"[{connector_name}] Dropping unknown kwarg '{k}' for {extractor_class.__name__}")
+                creds_kwargs.pop(k)
+    except (ValueError, TypeError):
+        pass
+
     # Patch datadog-api-client unstable_operations to silently ignore unknown keys
     _patch_datadog_unstable_ops()
 

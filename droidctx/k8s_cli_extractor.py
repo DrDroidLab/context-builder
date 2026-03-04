@@ -25,8 +25,16 @@ K8S_RESOURCES = [
 ]
 
 
+class _KubectlConnectionError(Exception):
+    """Raised when kubectl can't reach the cluster."""
+    pass
+
+
 def _kubectl_get(cmd_str: str, timeout: int = 30) -> list[dict]:
-    """Run a kubectl get command and return the items list."""
+    """Run a kubectl get command and return the items list.
+
+    Raises _KubectlConnectionError if the cluster is unreachable.
+    """
     try:
         result = subprocess.run(
             cmd_str.split(),
@@ -35,16 +43,21 @@ def _kubectl_get(cmd_str: str, timeout: int = 30) -> list[dict]:
             timeout=timeout,
         )
         if result.returncode != 0:
-            logger.warning(f"kubectl command failed: {cmd_str}: {result.stderr.strip()}")
+            stderr = result.stderr.strip()
+            # Detect connection failures so caller can fail fast
+            if "Unable to connect" in stderr or "failed with exit code" in stderr:
+                raise _KubectlConnectionError(stderr.split("\n")[-1])
+            logger.warning(f"kubectl failed: {cmd_str.split()[2]}: {stderr.split(chr(10))[-1]}")
             return []
 
         data = json.loads(result.stdout)
         return data.get("items", [])
     except subprocess.TimeoutExpired:
-        logger.warning(f"kubectl command timed out: {cmd_str}")
-        return []
+        raise _KubectlConnectionError(f"kubectl timed out: {cmd_str}")
+    except _KubectlConnectionError:
+        raise
     except (json.JSONDecodeError, OSError) as e:
-        logger.warning(f"kubectl command error: {cmd_str}: {e}")
+        logger.warning(f"kubectl error: {cmd_str.split()[2]}: {e}")
         return []
 
 
@@ -220,7 +233,12 @@ def extract_k8s_via_cli(
         if progress_callback:
             progress_callback(f"extract_{resource_name}", "running")
 
-        items = _kubectl_get(cmd)
+        try:
+            items = _kubectl_get(cmd)
+        except _KubectlConnectionError as e:
+            # Cluster unreachable — no point trying remaining resources
+            raise Exception(f"kubectl: cluster unreachable ({e})") from None
+
         parser = _PARSERS[resource_name]
 
         parsed = {}
