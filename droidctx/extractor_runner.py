@@ -7,6 +7,15 @@ import uuid
 from contextlib import contextmanager
 from typing import Any
 
+# drdroid-debug-toolkit imports Django settings at module level
+# (aws_boto_3_api_processor.py uses django.conf.settings for AWS_DRD_CLOUD_ROLE_ARN).
+# Configure minimal Django settings before importing the toolkit.
+import django.conf
+if not django.conf.settings.configured:
+    django.conf.settings.configure(
+        AWS_DRD_CLOUD_ROLE_ARN="",
+    )
+
 from drdroid_debug_toolkit.core.integrations.source_metadata_extractor import SourceMetadataExtractor
 from drdroid_debug_toolkit.core.integrations.source_metadata_extractor_facade import source_metadata_extractor_facade
 
@@ -19,6 +28,7 @@ _datadog_patched = False
 # Methods to skip per connector type (slow or redundant)
 SKIP_METHODS = {
     "DATADOG": {"extract_metrics"},  # Redundant with extract_services, very slow
+    "CLOUDWATCH": {"extract_dashboard_by_name"},  # Requires a dashboard_name argument
 }
 
 
