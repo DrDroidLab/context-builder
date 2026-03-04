@@ -114,5 +114,6 @@ class TestSyncEngine:
         output.mkdir()
 
         console = Console(file=open(tmp_path / "log.txt", "w"))
-        with pytest.raises(ValueError):
-            sync(keyfile=keyfile, output_dir=output, console=console)
+        # Empty file returns {} — sync completes with no connectors
+        result = sync(keyfile=keyfile, output_dir=output, console=console)
+        assert result == {}
