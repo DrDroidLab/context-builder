@@ -201,6 +201,95 @@ class MarkdownGenerator:
                 out.append(_table_row([aname, state, label_str]))
             out.append("")
 
+        # Prometheus Datasources
+        prom_ds = assets.get(SMT.GRAFANA_PROMETHEUS_DATASOURCE, {})
+        if prom_ds:
+            out.extend([f"## Prometheus Datasources ({len(prom_ds)})", "",
+                        _table_row(["Name", "Type", "UID"]), _table_row(["---", "---", "---"])])
+            for uid, info in prom_ds.items():
+                if isinstance(info, dict):
+                    out.append(_table_row([
+                        info.get("name", uid),
+                        str(info.get("type", "")),
+                        uid,
+                    ]))
+            out.append("")
+
+        # Loki Datasources
+        loki_ds = assets.get(SMT.GRAFANA_LOKI_DATASOURCE, {})
+        if loki_ds:
+            out.extend([f"## Loki Datasources ({len(loki_ds)})", "",
+                        _table_row(["Name", "UID", "Labels"]), _table_row(["---", "---", "---"])])
+            for uid, info in loki_ds.items():
+                if isinstance(info, dict):
+                    labels = info.get("available_labels", [])
+                    label_str = ", ".join(labels) if isinstance(labels, list) else str(labels)
+                    out.append(_table_row([
+                        info.get("name", uid),
+                        uid,
+                        label_str[:200],
+                    ]))
+            out.append("")
+            # Label details per datasource
+            for uid, info in loki_ds.items():
+                if not isinstance(info, dict):
+                    continue
+                labels = info.get("available_labels", [])
+                if not isinstance(labels, list) or not labels:
+                    continue
+                out.extend([f"### {info.get('name', uid)} Labels", ""])
+                for label in sorted(labels):
+                    out.append(f"- `{label}`")
+                out.append("")
+
+        # Tempo Datasources
+        tempo_ds = assets.get(SMT.GRAFANA_TEMPO_DATASOURCE, {})
+        if tempo_ds:
+            out.extend([f"## Tempo Datasources ({len(tempo_ds)})", "",
+                        _table_row(["Name", "Type", "UID"]), _table_row(["---", "---", "---"])])
+            for uid, info in tempo_ds.items():
+                if isinstance(info, dict):
+                    out.append(_table_row([
+                        info.get("name", uid),
+                        str(info.get("type", "")),
+                        uid,
+                    ]))
+            out.append("")
+
+        # Tempo Services
+        tempo_svcs = assets.get(SMT.GRAFANA_TEMPO_SERVICE, {})
+        if tempo_svcs:
+            out.extend([f"## Tempo Services ({len(tempo_svcs)})", "",
+                        _table_row(["Service", "Traces", "P99 Latency", "Errors", "Connected Services"]),
+                        _table_row(["---", "---", "---", "---", "---"])])
+            for uid, info in tempo_svcs.items():
+                if isinstance(info, dict):
+                    svc_name = info.get("service_name", uid)
+                    trace_count = info.get("trace_count", "")
+                    p99 = info.get("p99_latency_ns", "")
+                    errors = info.get("error_count", "")
+                    node_graph = info.get("node_graph", {})
+                    connected = node_graph.get("connected_services", []) if isinstance(node_graph, dict) else []
+                    connected_str = ", ".join(connected) if isinstance(connected, list) else ""
+                    out.append(_table_row([svc_name, str(trace_count), str(p99), str(errors), connected_str[:150]]))
+            out.append("")
+            # Dependency details per service
+            for uid, info in tempo_svcs.items():
+                if not isinstance(info, dict):
+                    continue
+                svc_name = info.get("service_name", uid)
+                dep_svcs = info.get("dependent_services", [])
+                in_traces = info.get("services_in_traces", [])
+                if dep_svcs or in_traces:
+                    out.append(f"### {svc_name}")
+                    out.append("")
+                    if dep_svcs:
+                        out.append(f"**Dependent services:** {', '.join(dep_svcs)}")
+                        out.append("")
+                    if in_traces:
+                        out.append(f"**Co-occurring in traces:** {', '.join(in_traces)}")
+                        out.append("")
+
         return out
 
     # ---- Datadog ----
