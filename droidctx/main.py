@@ -286,164 +286,207 @@ def list_connectors(
     console.print(f"\n[dim]{len(CONNECTOR_CREDENTIALS)} connectors supported. Use --type <TYPE> for details.[/]\n")
 
 
+def _get_commented_reference(exclude: set[str] | None = None) -> str:
+    """Return all connector templates as commented YAML for reference.
+
+    Args:
+        exclude: set of connector names to skip (already active).
+    """
+    exclude = exclude or set()
+
+    # All connector templates grouped by category
+    _ALL_TEMPLATES = {
+        "Monitoring & Observability": {
+            "grafana_prod": {
+                "type": "GRAFANA",
+                "grafana_host": "https://your-grafana.com",
+                "grafana_api_key": "glsa_xxxxxxxxxxxx",
+                "ssl_verify": False,
+            },
+            "datadog_prod": {
+                "type": "DATADOG",
+                "dd_api_key": "your_api_key",
+                "dd_app_key": "your_app_key",
+                "dd_api_domain": "datadoghq.com",
+            },
+            "newrelic_prod": {
+                "type": "NEW_RELIC",
+                "nr_api_key": "NRAK-xxxxxxxxxxxx",
+                "nr_account_id": "1234567",
+            },
+            "cloudwatch_us": {
+                "type": "CLOUDWATCH",
+                "region": "us-east-1",
+                "aws_access_key": "AKIAIOSFODNN7EXAMPLE",
+                "aws_secret_key": "wJalrXUtnFEMI/K7MDENG...",
+            },
+            "signoz_prod": {
+                "type": "SIGNOZ",
+                "signoz_host": "https://your-signoz.com",
+                "signoz_api_key": "your_api_key",
+            },
+            "sentry_prod": {
+                "type": "SENTRY",
+                "sentry_api_key": "your_api_key",
+                "sentry_org": "your-org",
+            },
+        },
+        "Kubernetes & Cloud": {
+            "k8s_production": {
+                "type": "KUBERNETES",
+                "cluster_name": "prod-cluster",
+                "cluster_api_server": "https://k8s-api.example.com",
+                "cluster_token": "eyJhbGciOiJSUzI1NiIs...",
+            },
+            "eks_prod": {
+                "type": "EKS",
+                "region": "us-east-1",
+                "eks_cluster_name": "prod-eks",
+            },
+            "gke_prod": {
+                "type": "GKE",
+                "gke_project_id": "my-project",
+                "gke_cluster_name": "prod-gke",
+                "gke_zone": "us-central1-a",
+            },
+            "argocd_prod": {
+                "type": "ARGOCD",
+                "argocd_server": "https://argocd.example.com",
+                "argocd_token": "your_token",
+            },
+            "azure_prod": {
+                "type": "AZURE",
+                "azure_tenant_id": "your_tenant_id",
+                "azure_client_id": "your_client_id",
+                "azure_client_secret": "your_client_secret",
+                "azure_subscription_id": "your_subscription_id",
+            },
+        },
+        "Databases": {
+            "postgres_main": {
+                "type": "POSTGRES",
+                "host": "db.example.com",
+                "port": 5432,
+                "database": "production",
+                "user": "readonly_user",
+                "password": "secret",
+            },
+            "mongodb_main": {
+                "type": "MONGODB",
+                "connection_string": "mongodb://user:pass@host:27017/db",
+            },
+            "clickhouse_prod": {
+                "type": "CLICKHOUSE",
+                "ch_host": "clickhouse.example.com",
+                "ch_port": 8123,
+                "ch_user": "default",
+                "ch_password": "secret",
+            },
+            "elasticsearch_prod": {
+                "type": "ELASTIC_SEARCH",
+                "es_host": "https://elasticsearch.example.com:9200",
+                "es_api_key": "your_api_key",
+            },
+            "opensearch_prod": {
+                "type": "OPEN_SEARCH",
+                "os_host": "https://opensearch.example.com:9200",
+                "os_username": "admin",
+                "os_password": "secret",
+            },
+            "sql_analytics": {
+                "type": "SQL_DATABASE_CONNECTION",
+                "connection_string": "mysql+pymysql://user:pass@host:3306/db",
+            },
+        },
+        "CI/CD & Project Management": {
+            "github_org": {
+                "type": "GITHUB",
+                "github_token": "ghp_xxxxxxxxxxxx",
+                "github_org": "your-org",
+            },
+            "jira_prod": {
+                "type": "JIRA_CLOUD",
+                "jira_url": "https://your-org.atlassian.net",
+                "jira_email": "you@company.com",
+                "jira_api_token": "your_api_token",
+            },
+            "jenkins_prod": {
+                "type": "JENKINS",
+                "jenkins_url": "https://jenkins.example.com",
+                "jenkins_user": "admin",
+                "jenkins_api_token": "your_api_token",
+            },
+        },
+        "Logs": {
+            "grafana_loki": {
+                "type": "GRAFANA_LOKI",
+                "grafana_host": "https://your-grafana.com",
+                "grafana_api_key": "glsa_xxxxxxxxxxxx",
+            },
+            "victoria_logs": {
+                "type": "VICTORIA_LOGS",
+                "vl_host": "https://victorialogs.example.com",
+            },
+            "coralogix_prod": {
+                "type": "CORALOGIX",
+                "coralogix_api_key": "your_api_key",
+                "coralogix_domain": "coralogix.com",
+            },
+        },
+        "Analytics": {
+            "posthog_prod": {
+                "type": "POSTHOG",
+                "posthog_host": "https://app.posthog.com",
+                "posthog_api_key": "phx_xxxxxxxxxxxx",
+            },
+        },
+        "Google Cloud": {
+            "gcm_prod": {
+                "type": "GCM",
+                "gcp_project_id": "my-project",
+                "gcp_service_account_json": "/path/to/service-account.json",
+            },
+        },
+    }
+
+    lines: list[str] = []
+    lines.append("")
+    lines.append("# -----------------------------------------------------------")
+    lines.append("# Reference: All supported connector types (uncomment to use)")
+    lines.append("# Run 'droidctx list-connectors' for detailed field info.")
+    lines.append("# -----------------------------------------------------------")
+
+    for category, connectors in _ALL_TEMPLATES.items():
+        # Skip category if all its connectors are excluded
+        remaining = {k: v for k, v in connectors.items() if k not in exclude}
+        if not remaining:
+            continue
+
+        lines.append("")
+        lines.append(f"# --- {category} ---")
+        lines.append("")
+        for conn_name, fields in remaining.items():
+            lines.append(f"# {conn_name}:")
+            for key, value in fields.items():
+                if isinstance(value, bool):
+                    lines.append(f"#   {key}: {str(value).lower()}")
+                elif isinstance(value, int):
+                    lines.append(f"#   {key}: {value}")
+                else:
+                    lines.append(f'#   {key}: "{value}"')
+            lines.append("")
+
+    return "\n".join(lines)
+
+
 def _write_credentials_template(filepath: Path):
-    """Write a credentials template YAML with all supported connector types."""
-    template = """# droidctx credentials file
+    """Write a credentials template YAML with all connector types commented out."""
+    header = """# droidctx credentials file
 # Uncomment and fill in the connectors you want to sync.
+# Run 'droidctx detect' to auto-detect CLI-based connectors.
 # Run 'droidctx list-connectors' to see all supported types and fields.
-
-# --- Monitoring & Observability ---
-
-# grafana_prod:
-#   type: "GRAFANA"
-#   grafana_host: https://your-grafana.com
-#   grafana_api_key: glsa_xxxxxxxxxxxx
-#   ssl_verify: false
-
-# datadog_prod:
-#   type: "DATADOG"
-#   dd_api_key: your_api_key
-#   dd_app_key: your_app_key
-#   dd_api_domain: datadoghq.com
-
-# newrelic_prod:
-#   type: "NEW_RELIC"
-#   nr_api_key: NRAK-xxxxxxxxxxxx
-#   nr_account_id: "1234567"
-
-# cloudwatch_us:
-#   type: "CLOUDWATCH"
-#   region: us-east-1
-#   aws_access_key: AKIAIOSFODNN7EXAMPLE
-#   aws_secret_key: wJalrXUtnFEMI/K7MDENG...
-
-# signoz_prod:
-#   type: "SIGNOZ"
-#   signoz_host: https://your-signoz.com
-#   signoz_api_key: your_api_key
-
-# sentry_prod:
-#   type: "SENTRY"
-#   sentry_api_key: your_api_key
-#   sentry_org: your-org
-
-# --- Kubernetes & Cloud ---
-
-# k8s_production:
-#   type: "KUBERNETES"
-#   cluster_name: prod-cluster
-#   cluster_api_server: https://k8s-api.example.com
-#   cluster_token: eyJhbGciOiJSUzI1NiIs...
-
-# eks_prod:
-#   type: "EKS"
-#   region: us-east-1
-#   eks_cluster_name: prod-eks
-
-# gke_prod:
-#   type: "GKE"
-#   gke_project_id: my-project
-#   gke_cluster_name: prod-gke
-#   gke_zone: us-central1-a
-
-# argocd_prod:
-#   type: "ARGOCD"
-#   argocd_server: https://argocd.example.com
-#   argocd_token: your_token
-
-# azure_prod:
-#   type: "AZURE"
-#   azure_tenant_id: your_tenant_id
-#   azure_client_id: your_client_id
-#   azure_client_secret: your_client_secret
-#   azure_subscription_id: your_subscription_id
-
-# --- Databases ---
-
-# postgres_main:
-#   type: "POSTGRES"
-#   host: db.example.com
-#   port: 5432
-#   database: production
-#   user: readonly_user
-#   password: secret
-
-# mongodb_main:
-#   type: "MONGODB"
-#   connection_string: mongodb://user:pass@host:27017/db
-
-# clickhouse_prod:
-#   type: "CLICKHOUSE"
-#   ch_host: clickhouse.example.com
-#   ch_port: 8123
-#   ch_user: default
-#   ch_password: secret
-
-# elasticsearch_prod:
-#   type: "ELASTIC_SEARCH"
-#   es_host: https://elasticsearch.example.com:9200
-#   es_api_key: your_api_key
-
-# opensearch_prod:
-#   type: "OPEN_SEARCH"
-#   os_host: https://opensearch.example.com:9200
-#   os_username: admin
-#   os_password: secret
-
-# --- CI/CD & Project Management ---
-
-# github_org:
-#   type: "GITHUB"
-#   github_token: ghp_xxxxxxxxxxxx
-#   github_org: your-org
-
-# jira_prod:
-#   type: "JIRA_CLOUD"
-#   jira_url: https://your-org.atlassian.net
-#   jira_email: you@company.com
-#   jira_api_token: your_api_token
-
-# jenkins_prod:
-#   type: "JENKINS"
-#   jenkins_url: https://jenkins.example.com
-#   jenkins_user: admin
-#   jenkins_api_token: your_api_token
-
-# --- Logs ---
-
-# grafana_loki:
-#   type: "GRAFANA_LOKI"
-#   grafana_host: https://your-grafana.com
-#   grafana_api_key: glsa_xxxxxxxxxxxx
-
-# victoria_logs:
-#   type: "VICTORIA_LOGS"
-#   vl_host: https://victorialogs.example.com
-
-# coralogix_prod:
-#   type: "CORALOGIX"
-#   coralogix_api_key: your_api_key
-#   coralogix_domain: coralogix.com
-
-# posthog_prod:
-#   type: "POSTHOG"
-#   posthog_host: https://app.posthog.com
-#   posthog_api_key: phx_xxxxxxxxxxxx
-
-# --- Google Cloud ---
-
-# gcm_prod:
-#   type: "GCM"
-#   gcp_project_id: my-project
-#   gcp_service_account_json: /path/to/service-account.json
-
-# --- Generic SQL ---
-
-# sql_analytics:
-#   type: "SQL_DATABASE_CONNECTION"
-#   connection_string: mysql+pymysql://user:pass@host:3306/db
 """
-    filepath.write_text(template)
+    filepath.write_text(header + _get_commented_reference())
 
 
 if __name__ == "__main__":

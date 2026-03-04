@@ -241,7 +241,14 @@ def merge_into_credentials(
 
 
 def save_credentials(credentials: dict[str, dict[str, Any]], keyfile: Path):
-    """Save credentials dict to YAML file."""
+    """Save active credentials + commented reference template to YAML file."""
+    from droidctx.main import _get_commented_reference
+
     keyfile.parent.mkdir(parents=True, exist_ok=True)
     with open(keyfile, "w") as f:
-        yaml.dump(credentials, f, default_flow_style=False, sort_keys=False)
+        f.write("# droidctx credentials file\n")
+        f.write("# Uncomment and fill in the connectors you want to sync.\n")
+        f.write("# Run 'droidctx detect' to auto-detect CLI-based connectors.\n\n")
+        if credentials:
+            yaml.dump(credentials, f, default_flow_style=False, sort_keys=False)
+        f.write(_get_commented_reference(exclude=set(credentials.keys())))

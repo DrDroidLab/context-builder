@@ -29,8 +29,14 @@ class TestLoadCredentials:
     def test_empty_file(self, tmp_path):
         f = tmp_path / "creds.yaml"
         f.write_text("")
-        with pytest.raises(ValueError, match="empty"):
-            load_credentials(f)
+        result = load_credentials(f)
+        assert result == {}
+
+    def test_comment_only_file(self, tmp_path):
+        f = tmp_path / "creds.yaml"
+        f.write_text("# grafana_prod:\n#   type: GRAFANA\n#   grafana_host: https://g.com\n")
+        result = load_credentials(f)
+        assert result == {}
 
 
 class TestValidateCredentials:

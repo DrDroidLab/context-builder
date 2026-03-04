@@ -20,7 +20,7 @@ def load_credentials(keyfile: Path) -> dict[str, dict[str, Any]]:
         data = yaml.safe_load(f)
 
     if not data or not isinstance(data, dict):
-        raise ValueError(f"Invalid credentials file: {keyfile} (empty or not a YAML mapping)")
+        return {}
 
     return data
 
