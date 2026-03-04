@@ -1,8 +1,10 @@
 """Wraps drdroid-debug-toolkit metadata extractors for standalone use."""
 
+import inspect
 import logging
 import os
 import sys
+import threading
 import uuid
 from contextlib import contextmanager
 from typing import Any
@@ -79,27 +81,58 @@ def _patch_datadog_skip_metric_tags():
         pass
 
 
+# Thread-local storage for output suppression
+_tls = threading.local()
+
+
 @contextmanager
 def _suppress_output():
-    """Suppress stdout and stderr from noisy toolkit code."""
+    """Suppress stdout/stderr in a thread-safe way using per-thread devnull."""
     devnull = open(os.devnull, "w")
     old_stdout, old_stderr = sys.stdout, sys.stderr
+    _tls.devnull = devnull
     try:
-        sys.stdout, sys.stderr = devnull, devnull
+        sys.stdout = devnull
+        sys.stderr = devnull
         yield
     finally:
-        sys.stdout, sys.stderr = old_stdout, old_stderr
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
+        _tls.devnull = None
         devnull.close()
+
+
+def _has_required_args(method) -> bool:
+    """Check if a method requires positional arguments beyond self."""
+    try:
+        sig = inspect.signature(method)
+        for param in sig.parameters.values():
+            if param.name == "self":
+                continue
+            if param.default is inspect.Parameter.empty and param.kind in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            ):
+                return True
+        return False
+    except (ValueError, TypeError):
+        return False
 
 
 def get_extract_methods(extractor) -> list[str]:
     """Get all extract_* methods on an extractor instance (excluding base class methods)."""
-    return [
-        m for m in dir(extractor)
-        if callable(getattr(extractor, m))
-        and m.startswith("extract_")
-        and m not in dir(SourceMetadataExtractor)
-    ]
+    methods = []
+    for m in dir(extractor):
+        if not m.startswith("extract_") or m in dir(SourceMetadataExtractor):
+            continue
+        method = getattr(extractor, m)
+        if not callable(method):
+            continue
+        # Skip methods that require positional arguments (e.g. extract_deployments_for_namespace)
+        if _has_required_args(method):
+            continue
+        methods.append(m)
+    return methods
 
 
 def run_extractor(
