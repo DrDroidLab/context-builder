@@ -4,10 +4,15 @@ Infrastructure context builder for Claude Code and coding agents.
 
 Connect your production tools (Grafana, Datadog, Kubernetes, CloudWatch, databases, etc.), extract metadata, and generate structured `.md` files that give coding agents instant context about your infrastructure.
 
-<a href="https://x.com/TheBengaluruGuy/status/2029378312414347674">
-  <img src="assets/x-launch-img.png" alt="Watch the demo on X" width="560">
-</a>
-<br><br>
+<p align="center">
+  <a href="https://x.com/TheBengaluruGuy/status/2029378312414347674">
+    <img src="assets/x-launch-img.png" alt="Watch the demo on X" width="560">
+  </a>
+  <br>
+  <a href="https://x.com/TheBengaluruGuy/status/2029378312414347674">
+    <img src="assets/btn-watch-demo.svg" alt="Watch Demo" height="36">
+  </a>
+</p>
 
 ## Quick Start
 
