@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="140" height="36" viewBox="0 0 140 36">
+  <rect width="140" height="36" rx="8" fill="#9554FF"/>
+  <polygon points="16,10 16,26 28,18" fill="#fff"/>
+  <foreignObject x="32" y="0" width="104" height="36">
+    <body xmlns="http://www.w3.org/1999/xhtml" style="margin:0;display:flex;align-items:center;height:36px;">
+      <span style="color:#fff;font-family:Arial,sans-serif;font-size:15px;font-weight:bold;">Watch Demo</span>
+    </body>
+  </foreignObject>
+</svg>
