@@ -112,9 +112,11 @@ class MarkdownGenerator:
         }
 
         gen = generators.get(connector_type, self._generate_generic)
-        lines.extend(gen(connector_name, connector_type, assets))
-
         cdir = self._connector_dir(connector_name)
+        if gen in (self._generate_database, self._generate_grafana):
+            lines.extend(gen(connector_name, connector_type, assets, cdir=cdir))
+        else:
+            lines.extend(gen(connector_name, connector_type, assets))
         self._write(cdir / "context.md", "\n".join(lines))
 
     def _generate_summary(self, connector_name: str, connector_type: str, assets: dict) -> list[str]:
@@ -139,7 +141,7 @@ class MarkdownGenerator:
 
     # ---- Grafana ----
 
-    def _generate_grafana(self, name: str, ctype: str, assets: dict) -> list[str]:
+    def _generate_grafana(self, name: str, ctype: str, assets: dict, cdir: Path = None) -> list[str]:
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
 
         out: list[str] = []
@@ -160,32 +162,18 @@ class MarkdownGenerator:
             out.extend([f"## Dashboards ({len(dashboards)})", "",
                         _table_row(["Dashboard", "UID", "Panels"]), _table_row(["---", "---", "---"])])
             for uid, info in dashboards.items():
-                title = info.get("title", uid)
-                panels = info.get("panels", [])
+                db = info.get("dashboard", info) if isinstance(info, dict) else {}
+                title = db.get("title", uid)
+                panels = db.get("panels", [])
                 panel_count = len(panels) if isinstance(panels, list) else 0
                 out.append(_table_row([title, uid, str(panel_count)]))
+                # Write per-dashboard detail file
+                if cdir:
+                    self._write_dashboard_detail(cdir, uid, title, db)
             out.append("")
 
-            # Panel details per dashboard
-            for uid, info in dashboards.items():
-                title = info.get("title", uid)
-                panels = info.get("panels", [])
-                if not isinstance(panels, list) or not panels:
-                    continue
-                out.extend([f"### {title}", "",
-                            _table_row(["Panel", "Type", "Query/Metric"]),
-                            _table_row(["---", "---", "---"])])
-                for p in panels:
-                    if isinstance(p, dict):
-                        pname = p.get("title", "Untitled")
-                        ptype = p.get("type", "")
-                        expr = ""
-                        targets = p.get("targets", [])
-                        if isinstance(targets, list):
-                            for t in targets[:1]:
-                                if isinstance(t, dict):
-                                    expr = t.get("expr", t.get("query", ""))
-                        out.append(_table_row([pname, ptype, str(expr)[:200]]))
+            if cdir:
+                out.append("*Full dashboard details in `dashboards/` folder.*")
                 out.append("")
 
         # Alerts
@@ -291,6 +279,40 @@ class MarkdownGenerator:
                         out.append("")
 
         return out
+
+    def _write_dashboard_detail(self, cdir: Path, uid: str, title: str, db: dict):
+        """Write a detailed markdown file for a single Grafana dashboard."""
+        lines: list[str] = [f"# {title}", ""]
+
+        description = db.get("description", "")
+        tags = db.get("tags", [])
+        if description:
+            lines.append(f"- **Description:** {description}")
+        if tags and isinstance(tags, list):
+            lines.append(f"- **Tags:** {', '.join(str(t) for t in tags)}")
+        if description or tags:
+            lines.append("")
+
+        panels = db.get("panels", [])
+        if isinstance(panels, list) and panels:
+            lines.extend(["## Panels", "",
+                          _table_row(["Panel", "Type", "Query/Metric"]),
+                          _table_row(["---", "---", "---"])])
+            for p in panels:
+                if isinstance(p, dict):
+                    pname = p.get("title", "Untitled")
+                    ptype = p.get("type", "")
+                    expr = ""
+                    targets = p.get("targets", [])
+                    if isinstance(targets, list):
+                        for t in targets[:1]:
+                            if isinstance(t, dict):
+                                expr = t.get("expr", t.get("query", ""))
+                    lines.append(_table_row([pname, ptype, str(expr)[:200]]))
+            lines.append("")
+
+        safe_name = sanitize_filename(uid)
+        self._write(cdir / "dashboards" / f"{safe_name}.md", "\n".join(lines))
 
     # ---- Datadog ----
 
@@ -1073,7 +1095,7 @@ class MarkdownGenerator:
 
     # ---- Databases ----
 
-    def _generate_database(self, name: str, ctype: str, assets: dict) -> list[str]:
+    def _generate_database(self, name: str, ctype: str, assets: dict, cdir: Path = None) -> list[str]:
         from drdroid_debug_toolkit.core.protos.base_pb2 import SourceModelType as SMT
 
         out: list[str] = []
@@ -1090,11 +1112,92 @@ class MarkdownGenerator:
                 if isinstance(info, dict):
                     cols = info.get("columns", info.get("fields", []))
                     if isinstance(cols, list):
-                        details = ", ".join(str(c)[:50] for c in cols[:10])
+                        col_names = []
+                        for c in cols[:10]:
+                            if isinstance(c, dict):
+                                col_names.append(c.get("name", str(c))[:50])
+                            else:
+                                col_names.append(str(c)[:50])
+                        details = ", ".join(col_names)
+                    # Write per-table detail file
+                    if cdir:
+                        self._write_table_detail(cdir, iname, info)
                 out.append(_table_row([iname, details[:200]]))
             out.append("")
 
+        if cdir:
+            out.append(f"*Full table details in `tables/` folder.*")
+            out.append("")
+
         return out
+
+    def _write_table_detail(self, cdir: Path, table_name: str, info: dict):
+        """Write a detailed markdown file for a single database table."""
+        lines: list[str] = [f"# {table_name}", ""]
+
+        schema = info.get("schema_name", "")
+        description = info.get("description", "")
+        size = info.get("size", "")
+
+        if schema:
+            lines.append(f"- **Schema:** {schema}")
+        if description:
+            lines.append(f"- **Description:** {description}")
+        if size:
+            lines.append(f"- **Size:** {size}")
+        if schema or description or size:
+            lines.append("")
+
+        # Columns
+        cols = info.get("columns", info.get("fields", []))
+        if isinstance(cols, list) and cols:
+            lines.extend(["## Columns", "",
+                          _table_row(["Column", "Type", "Nullable", "PK", "Default", "Description"]),
+                          _table_row(["---", "---", "---", "---", "---", "---"])])
+            for c in cols:
+                if isinstance(c, dict):
+                    lines.append(_table_row([
+                        c.get("name", ""),
+                        c.get("data_type", c.get("type", "")),
+                        "Yes" if c.get("is_nullable") else "No",
+                        "Yes" if c.get("is_primary_key") else "No",
+                        str(c.get("default_value", "") or ""),
+                        str(c.get("description", "") or ""),
+                    ]))
+                else:
+                    lines.append(_table_row([str(c), "", "", "", "", ""]))
+            lines.append("")
+
+        # Primary keys
+        pks = info.get("primary_keys", [])
+        if isinstance(pks, list) and pks:
+            lines.extend(["## Primary Keys", ""])
+            lines.append(", ".join(str(k) for k in pks))
+            lines.append("")
+
+        # Indexes
+        indexes = info.get("indexes", [])
+        if isinstance(indexes, list) and indexes:
+            lines.extend(["## Indexes", "",
+                          _table_row(["Name", "Type", "Unique", "Columns"]),
+                          _table_row(["---", "---", "---", "---"])])
+            for idx in indexes:
+                if isinstance(idx, dict):
+                    idx_cols = idx.get("columns", [])
+                    if isinstance(idx_cols, list):
+                        idx_cols_str = ", ".join(str(ic) for ic in idx_cols)
+                    else:
+                        idx_cols_str = str(idx_cols)
+                    lines.append(_table_row([
+                        idx.get("name", ""),
+                        idx.get("type", ""),
+                        "Yes" if idx.get("is_unique") else "No",
+                        idx_cols_str,
+                    ]))
+            lines.append("")
+
+        safe_name = sanitize_filename(table_name)
+        self._write(cdir / "tables" / f"{safe_name}.md", "\n".join(lines))
 
     # ---- Search Indexes ----
 
