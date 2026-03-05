@@ -2,7 +2,12 @@
 
 Infrastructure context builder for Claude Code and coding agents.
 
-Connect your production tools (Grafana, Datadog, Kubernetes, CloudWatch, databases, etc.), extract metadata, and generate structured `.md` files that give AI agents deep understanding of your system topology.
+Connect your production tools (Grafana, Datadog, Kubernetes, CloudWatch, databases, etc.), extract metadata, and generate structured `.md` files that give coding agents instant context about your infrastructure.
+
+<a href="https://x.com/TheBengaluruGuy/status/2029378312414347674">
+  <img src="assets/x-launch-img.png" alt="Watch the demo on X" width="560">
+</a>
+<br><br>
 
 ## Quick Start
 
@@ -31,6 +36,51 @@ vim ./droidctx-context/credentials.yaml
 droidctx sync
 
 # 5. Add the suggested prompt to your CLAUDE.md
+```
+
+## Output Structure
+
+After running `droidctx sync`, your context directory will contain:
+
+```
+my-infra/
+  resources/
+    overview.md                    # Summary of all connected tools
+    connectors/
+      grafana_prod/
+        _summary.md                # Resource counts for this connector
+        datasources.md             # Grafana datasources
+        dashboards.md              # Dashboard index
+        dashboards/
+          api-gateway.md           # Individual dashboard with panels & queries
+          payment-service.md
+        alerts.md                  # Alert rules
+      k8s_production/
+        _summary.md
+        namespaces.md
+        deployments.md
+        services.md
+        ingresses.md
+        ...
+      datadog_prod/
+        _summary.md
+        monitors.md
+        services.md
+        dashboards.md
+      postgres_main/
+        _summary.md
+        tables.md
+    cross_references/
+      services.md                  # Services seen across multiple connectors
+```
+
+## Using with Claude Code
+
+After syncing, add this to your `CLAUDE.md`:
+
+```
+My production infrastructure context is in ./my-infra/resources/.
+Refer to this when investigating issues, writing queries, or understanding system topology.
 ```
 
 ## Commands
@@ -154,52 +204,11 @@ When `_cli_mode: true` is set on a KUBERNETES connector, droidctx uses `kubectl`
 | **Project Management** | Jira Cloud |
 | **Logs** | Grafana Loki, Victoria Logs, Coralogix, PostHog |
 
-## Output Structure
+## Why
 
-After running `droidctx sync`, your context directory will contain:
+When your coding agent debugs production issues, it wastes tokens fumbling across tools, picks wrong MCP servers, and hallucinates about your setup. Pre-built context files fix that — fewer steps, better hypotheses, less noise.
 
-```
-my-infra/
-  resources/
-    overview.md                    # Summary of all connected tools
-    connectors/
-      grafana_prod/
-        _summary.md                # Resource counts for this connector
-        datasources.md             # Grafana datasources
-        dashboards.md              # Dashboard index
-        dashboards/
-          api-gateway.md           # Individual dashboard with panels & queries
-          payment-service.md
-        alerts.md                  # Alert rules
-      k8s_production/
-        _summary.md
-        namespaces.md
-        deployments.md
-        services.md
-        ingresses.md
-        ...
-      datadog_prod/
-        _summary.md
-        monitors.md
-        services.md
-        dashboards.md
-      postgres_main/
-        _summary.md
-        tables.md
-    cross_references/
-      services.md                  # Services seen across multiple connectors
-```
-
-## Using with Claude Code
-
-After syncing, add this to your `CLAUDE.md`:
-
-```
-My production infrastructure context is in ./my-infra/resources/.
-Refer to this when investigating issues, writing queries, or understanding system topology.
-```
-
-Your agent will now know:
+Your agent will know:
 - Which dashboards exist and what metrics they track
 - What services are running and where they're deployed
 - Which alerts are configured and what they monitor
