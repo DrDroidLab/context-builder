@@ -16,6 +16,12 @@ app = typer.Typer(
     add_completion=False,
     no_args_is_help=True,
 )
+auto_sync_app = typer.Typer(
+    name="auto-sync",
+    help="Manage automatic periodic syncing.",
+    no_args_is_help=True,
+)
+app.add_typer(auto_sync_app, name="auto-sync")
 console = Console()
 
 
@@ -284,6 +290,101 @@ def list_connectors(
     console.print()
     console.print(table)
     console.print(f"\n[dim]{len(CONNECTOR_CREDENTIALS)} connectors supported. Use --type <TYPE> for details.[/]\n")
+
+
+@auto_sync_app.command()
+def enable(
+    keyfile: Path = typer.Option(..., "--keyfile", "-k", help="Path to credentials YAML file"),
+    path: Optional[Path] = typer.Option(None, "--path", "-p", help="Output directory (default: same as keyfile dir)"),
+    interval: int = typer.Option(30, "--interval", "-i", help="Sync interval in minutes"),
+):
+    """Enable automatic periodic syncing."""
+    from droidctx.auto_sync import resolve_paths, find_droidctx_binary, save_config, build_config
+    from droidctx.scheduler import get_scheduler
+
+    keyfile_abs, output_dir = resolve_paths(keyfile, path)
+
+    if not keyfile_abs.exists():
+        console.print(f"[red]Keyfile not found: {keyfile_abs}[/]")
+        raise typer.Exit(1)
+
+    droidctx_bin = find_droidctx_binary()
+    if not droidctx_bin:
+        console.print("[red]Could not find 'droidctx' on PATH. Is it installed?[/]")
+        raise typer.Exit(1)
+
+    config = build_config(
+        keyfile=keyfile_abs,
+        output_dir=output_dir,
+        interval_minutes=interval,
+        droidctx_bin=droidctx_bin,
+    )
+
+    scheduler = get_scheduler()
+    # Re-enable: uninstall old job first
+    if scheduler.is_active():
+        scheduler.uninstall()
+    scheduler.install(config)
+    save_config(config)
+
+    console.print(f"[bold green]Auto-sync enabled[/] (every {interval} min)")
+    console.print(f"  keyfile:    {keyfile_abs}")
+    console.print(f"  output_dir: {output_dir}")
+    console.print(f"  binary:     {droidctx_bin}")
+
+
+@auto_sync_app.command()
+def disable():
+    """Disable automatic periodic syncing."""
+    from droidctx.auto_sync import load_config, save_config
+    from droidctx.scheduler import get_scheduler
+
+    config = load_config()
+    scheduler = get_scheduler()
+
+    if not config.get("enabled") and not scheduler.is_active():
+        console.print("[yellow]Auto-sync is not currently enabled.[/]")
+        raise typer.Exit(0)
+
+    if scheduler.is_active():
+        scheduler.uninstall()
+
+    config["enabled"] = False
+    save_config(config)
+    console.print("[bold green]Auto-sync disabled.[/]")
+
+
+@auto_sync_app.command()
+def status():
+    """Show current auto-sync status."""
+    from droidctx.auto_sync import load_config, get_last_run_time
+    from droidctx.scheduler import get_scheduler
+
+    config = load_config()
+    if not config:
+        console.print("[yellow]Auto-sync has not been configured.[/]")
+        raise typer.Exit(0)
+
+    scheduler = get_scheduler()
+    active = scheduler.is_active()
+
+    table = Table(title="Auto-Sync Status")
+    table.add_column("Setting", style="bold")
+    table.add_column("Value")
+
+    table.add_row("Enabled", "[green]yes[/]" if config.get("enabled") and active else "[red]no[/]")
+    table.add_row("Interval", f"{config.get('interval_minutes', '?')} minutes")
+    table.add_row("Keyfile", str(config.get("keyfile", "?")))
+    table.add_row("Output dir", str(config.get("output_dir", "?")))
+    table.add_row("Binary", str(config.get("droidctx_bin", "?")))
+    table.add_row("Platform", str(config.get("platform", "?")))
+
+    last_run = get_last_run_time()
+    table.add_row("Last log entry", last_run or "[dim]none[/]")
+
+    console.print()
+    console.print(table)
+    console.print()
 
 
 def _get_commented_reference(exclude: set[str] | None = None) -> str:

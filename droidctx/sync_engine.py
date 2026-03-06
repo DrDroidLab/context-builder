@@ -32,6 +32,9 @@ def sync(
     """
     console = console or Console()
 
+    from datetime import datetime, timezone
+    console.print(f"[dim]--- sync started at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')} ---[/]")
+
     # Suppress noisy toolkit logs unless verbose
     if not verbose:
         for noisy in [
@@ -172,6 +175,13 @@ def sync(
     console.print("[dim]  Refer to this when investigating issues, writing queries, or understanding system topology.[/]")
     console.print("\n[bold]Optional (if you want agent to refresh the context):[/]\n")
     console.print("[dim]  Before using context files, check the synced_at timestamp in the YAML frontmatter.[/]")
-    console.print("[dim]  If the data is older than 6 hours, run `droidctx sync` to refresh the context.[/]\n")
+    console.print("[dim]  If the data is older than 6 hours, run `droidctx sync` to refresh the context.[/]")
+
+    # Hint about auto-sync if not already enabled
+    from droidctx.auto_sync import load_config as _load_auto_sync_config
+    auto_cfg = _load_auto_sync_config()
+    if not auto_cfg.get("enabled"):
+        console.print("\n[bold]Set up auto-sync to keep context fresh automatically:[/]\n")
+        console.print(f"[dim]  droidctx auto-sync enable --keyfile {keyfile} --interval <minutes>[/]\n")
 
     return results
