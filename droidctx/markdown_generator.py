@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from droidctx import __version__
+
 logger = logging.getLogger(__name__)
 
 # Max lines per generated .md file before truncation
@@ -64,6 +66,7 @@ class MarkdownGenerator:
     def __init__(self, output_dir: Path):
         self.output_dir = output_dir
         self.resources_dir = output_dir / "resources"
+        self.sync_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     def _connector_dir(self, connector_name: str) -> Path:
         """Return resources/connectors/<sanitized_name>/, creating it if needed."""
@@ -71,8 +74,18 @@ class MarkdownGenerator:
         d.mkdir(parents=True, exist_ok=True)
         return d
 
+    def _metadata_header(self) -> str:
+        """Return a YAML frontmatter metadata block for generated files."""
+        return (
+            "---\n"
+            f"synced_at: {self.sync_ts}\n"
+            f"droidctx_version: {__version__}\n"
+            "---\n\n"
+        )
+
     def _write(self, path: Path, content: str):
         path.parent.mkdir(parents=True, exist_ok=True)
+        content = self._metadata_header() + content
         lines = content.split("\n")
         lines = _truncate(lines)
         path.write_text("\n".join(lines))
@@ -1758,11 +1771,8 @@ class MarkdownGenerator:
 
     def generate_overview(self, all_results: dict[str, dict]):
         """Generate the top-level overview.md summarizing all connectors."""
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         lines = [
             "# Infrastructure Overview",
-            "",
-            f"Last synced: {now}",
             "",
             "## Connected Tools",
             "",

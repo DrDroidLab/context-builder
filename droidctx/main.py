@@ -7,7 +7,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from droidctx import __version__
+from droidctx import __resolved_version__
 from droidctx.constants import CONNECTOR_CREDENTIALS, RESOURCE_DIRS
 
 app = typer.Typer(
@@ -21,7 +21,7 @@ console = Console()
 
 def version_callback(value: bool):
     if value:
-        console.print(f"droidctx {__version__}")
+        console.print(f"droidctx {__resolved_version__}")
         raise typer.Exit()
 
 
