@@ -150,6 +150,28 @@ droidctx list-connectors
 droidctx list-connectors --type GRAFANA
 ```
 
+### `droidctx auto-sync`
+
+Keep your context files fresh automatically. Uses launchd on macOS and cron on Linux.
+
+```bash
+# Enable auto-sync (runs every 30 minutes by default)
+droidctx auto-sync enable --keyfile ./droidctx-context/credentials.yaml
+
+# Custom interval (in minutes)
+droidctx auto-sync enable --keyfile ./droidctx-context/credentials.yaml --interval 60
+
+# Check status
+droidctx auto-sync status
+
+# Disable
+droidctx auto-sync disable
+```
+
+Logs are written to `~/.config/droidctx/auto-sync.log`.
+
+> **macOS note:** You may need to allow droidctx in System Settings → Privacy & Security the first time.
+
 ## Credentials Format
 
 Create a YAML file with your connector credentials. Run `droidctx init` to generate a template with all supported types, or `droidctx detect` to auto-populate from your CLI tools.
