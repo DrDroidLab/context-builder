@@ -1818,6 +1818,11 @@ class MarkdownGenerator:
             "```",
             "My production infrastructure context is in ./resources/.",
             "Refer to this when investigating issues, writing queries, or understanding system topology.",
+            "",
+            "",
+            "Optional (if you want agent to refresh the context):",
+            "Before using context files, check the synced_at timestamp in the YAML frontmatter.",
+            "If the data is older than 6 hours, run `droidctx sync` to refresh the context.",
             "```",
             "",
         ])
