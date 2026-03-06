@@ -167,8 +167,11 @@ def sync(
         console.print(f"[yellow]{fail_count} connector(s) failed[/]")
 
     # 9. Print suggested CLAUDE.md prompt
-    console.print("\nAdd this to your CLAUDE.md or agent prompt:\n")
+    console.print("\n[bold]Add this to your CLAUDE.md or agent prompt:[/]\n")
     console.print(f'[dim]  My production infrastructure context is in {output_dir / "resources"}/.[/]')
-    console.print("[dim]  Refer to this when investigating issues, writing queries, or understanding system topology.[/]\n")
+    console.print("[dim]  Refer to this when investigating issues, writing queries, or understanding system topology.[/]")
+    console.print("\n[bold]Optional (if you want agent to refresh the context):[/]\n")
+    console.print("[dim]  Before using context files, check the synced_at timestamp in the YAML frontmatter.[/]")
+    console.print("[dim]  If the data is older than 6 hours, run `droidctx sync` to refresh the context.[/]\n")
 
     return results
