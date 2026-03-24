@@ -15,6 +15,10 @@ Connect your production tools (Grafana, Datadog, Kubernetes, CloudWatch, databas
   </a>
 </p>
 
+<p align="center">
+  <a href="https://discord.com/invite/AQ3tusPtZn">Join our Discord community</a>
+</p>
+
 ## Quick Start
 
 ```bash
@@ -247,6 +251,10 @@ Your agent will know:
 
 - Python >= 3.9
 - Some connectors require CLI tools: `kubectl` (Kubernetes), `aws` (CloudWatch/EKS), `az` (Azure), `gcloud` (GKE/GCM)
+
+## Community
+
+Join our [Discord community](https://discord.com/invite/AQ3tusPtZn) for support, feedback, and discussions.
 
 ## License
 
